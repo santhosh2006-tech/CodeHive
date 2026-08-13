@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeHive Workspace IDE</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #090d16;
+            --bg-sidebar: #0f1524;
+            --card-bg: #151e33;
+            --border-color: rgba(255, 255, 255, 0.06);
+            --text-main: #e5e7eb;
+            --text-muted: #9ca3af;
+            --accent-blue: #3b82f6;
+            --accent-green: #10b981;
+            --accent-yellow: #f59e0b;
+            --accent-red: #ef4444;
+            --worker-1: #06b6d4;
+            --worker-2: #10b981;
+            --worker-3: #d946ef;
+            --worker-4: #f59e0b;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: 'Outfit', sans-serif;
+            height: 100vh;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* Sidebar Layout */
+        .sidebar {
+            width: 380px;
+            background-color: var(--bg-sidebar);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+            height: 100%;
+        }
+
+        /* Workspace Directory Selector */
+        .workspace-panel {
+            padding: 1.25rem;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .workspace-title {
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+        }
+
+        .workspace-path-display {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 0.5rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            word-break: break-all;
+            color: #a7f3d0;
+        }
+
+        .workspace-input-group {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .workspace-input-group input {
+            flex-grow: 1;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 0.4rem 0.6rem;
+            color: var(--text-main);
+            font-size: 0.85rem;
+            outline: none;
+        }
+
+        .workspace-input-group input:focus {
+            border-color: var(--accent-blue);
+        }
+
+        .workspace-input-group button {
+            background: var(--accent-blue);
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            padding: 0.4rem 0.8rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .workspace-input-group button:hover {
+            opacity: 0.9;
+        }
+
+        /* File Explorer Tree */
+        .explorer-panel {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .explorer-header {
+            padding: 0.75rem 1.25rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .explorer-title {
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+        }
+
+        .refresh-btn {
+            background: transparent;
+            border: none;
+            color: var(--accent-blue);
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .refresh-btn:hover {
+            text-decoration: underline;
+        }
+
+        .file-tree {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 0.75rem 1.25rem;
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 0.3rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.3rem 0.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .file-item:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .file-item.active {
+            background: rgba(59, 130, 246, 0.1);
+            color: #60a5fa;
+            border-left: 2px solid var(--accent-blue);
+        }
+
+        /* Preview Panel */
+        .preview-panel {
+            height: 250px;
+            background: rgba(0, 0, 0, 0.25);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .preview-header {
+            padding: 0.5rem 1rem;
+            background: rgba(0, 0, 0, 0.2);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .preview-title {
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+
+        .preview-content {
+            flex-grow: 1;
+            overflow: auto;
+            padding: 0.75rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            white-space: pre-wrap;
+            color: #d1d5db;
+        }
+
+        /* Main Chat Area */
+        .chat-area {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        .chat-header {
+            padding: 1.25rem 2rem;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(15, 21, 36, 0.4);
+            backdrop-filter: blur(5px);
+        }
+
+        .chat-header h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--accent-yellow);
+        }
+
+        .chat-header h1 span {
+            color: var(--text-main);
+            font-weight: 400;
+            font-size: 1rem;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.8rem;
+            font-weight: 600;
+            background: rgba(255, 255, 255, 0.03);
+            padding: 0.3rem 0.6rem;
+            border-radius: 9999px;
+            border: 1px solid var(--border-color);
+        }
+
+        .status-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background-color: #6b7280;
+        }
+
+        .status-dot.active {
+            background-color: var(--accent-green);
+            box-shadow: 0 0 6px var(--accent-green);
+        }
+
+        .status-dot.executing {
+            background-color: var(--accent-green);
+            box-shadow: 0 0 6px var(--accent-green);
+            animation: pulse 1s infinite alternate;
+        }
+
+        /* Chat Messages List */
+        .chat-history {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        .msg-row {
+            display: flex;
+            width: 100%;
+        }
+
+        .msg-row.user {
+            justify-content: flex-end;
+        }
+
+        .msg-row.assistant {
+            justify-content: flex-start;
+        }
+
+        .msg-bubble {
+            max-width: 80%;
+            border-radius: 12px;
+            padding: 1rem 1.25rem;
+            line-height: 1.5;
+            font-size: 0.95rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .msg-row.user .msg-bubble {
+            background: var(--accent-blue);
+            color: #fff;
+            border-top-right-radius: 2px;
+        }
+
+        .msg-row.assistant .msg-bubble {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            border-top-left-radius: 2px;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        /* Collapsible items details styling */
+        details {
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            border-radius: 6px;
+            background: rgba(0, 0, 0, 0.15);
+            overflow: hidden;
+        }
+
+        summary {
+            padding: 0.5rem 0.75rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            user-select: none;
+            background: rgba(255, 255, 255, 0.02);
+            color: var(--text-muted);
+            outline: none;
+        }
+
+        summary:hover {
+            color: var(--text-main);
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .details-content {
+            padding: 0.75rem;
+            border-top: 1px solid var(--border-color);
+        }
+
+        /* Subtasks grid */
+        .subtasks-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 0.75rem;
+        }
+
+        .subtask-card {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 0.75rem;
+            border-left: 3px solid var(--accent-blue);
+        }
+
+        .subtask-card h4 {
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 0.3rem;
+            color: #fff;
+        }
+
+        .subtask-card p {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        /* Tool feed container */
+        .feed-container {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            max-height: 250px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+        }
+
+        .feed-line {
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .feed-line .worker { font-weight: 600; }
+        .feed-line .worker-1 { color: var(--worker-1); }
+        .feed-line .worker-2 { color: var(--worker-2); }
+        .feed-line .worker-3 { color: var(--worker-3); }
+        .feed-line .worker-4 { color: var(--worker-4); }
+        .feed-line .provider { color: #6b7280; font-size: 0.75rem; }
+        .feed-line .tool { color: var(--accent-yellow); }
+        .feed-line .args { color: #a7f3d0; }
+
+        /* Conflicts alert styling */
+        .conflict-card {
+            border-radius: 6px;
+            padding: 0.75rem;
+            font-size: 0.85rem;
+            margin-bottom: 0.5rem;
+            border-left: 4px solid transparent;
+        }
+
+        .conflict-card.resolved {
+            background: rgba(245, 158, 11, 0.04);
+            border-color: var(--accent-yellow);
+            color: #fde68a;
+        }
+
+        .conflict-card.unresolved {
+            background: rgba(239, 68, 68, 0.04);
+            border-color: var(--accent-red);
+            color: #fca5a5;
+        }
+
+        /* Summaries list */
+        .results-container {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .result-item {
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+        }
+
+        .result-item-header {
+            background: rgba(16, 185, 129, 0.04);
+            border-bottom: 1px solid var(--border-color);
+            padding: 0.5rem 0.75rem;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--accent-green);
+        }
+
+        .result-item-body {
+            padding: 0.75rem;
+            font-size: 0.85rem;
+            white-space: pre-wrap;
+            color: #d1d5db;
+        }
+
+        /* Current status block */
+        .status-log {
+            font-size: 0.85rem;
+            font-style: italic;
+            color: var(--text-muted);
+            animation: pulse 2s infinite;
+        }
+
+        /* Error block */
+        .error-log {
+            border-left: 4px solid var(--accent-red);
+            background: rgba(239, 68, 68, 0.05);
+            padding: 0.75rem;
+            border-radius: 6px;
+            color: #fca5a5;
+            font-weight: 500;
+            font-size: 0.85rem;
+        }
+
+        /* Sticky bottom input panel */
+        .chat-input-panel {
+            padding: 1.5rem 2rem;
+            border-top: 1px solid var(--border-color);
+            background: rgba(15, 21, 36, 0.5);
+            backdrop-filter: blur(5px);
+            display: flex;
+            gap: 1rem;
+            align-items: flex-end;
+        }
+
+        .chat-input-panel textarea {
+            flex-grow: 1;
+            height: 50px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 0.6rem 0.8rem;
+            color: var(--text-main);
+            font-family: inherit;
+            font-size: 0.95rem;
+            resize: none;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .chat-input-panel textarea:focus {
+            border-color: var(--accent-blue);
+        }
+
+        .chat-input-panel button {
+            background: var(--accent-blue);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 0 1.5rem;
+            height: 50px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .chat-input-panel button:hover {
+            opacity: 0.9;
+        }
+
+        .chat-input-panel button:disabled {
+            background: #4b5563;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body>
+    <!-- Sidebar Explorer -->
+    <aside class="sidebar">
+        <!-- Workspace path setting -->
+        <div class="workspace-panel">
+            <div class="workspace-title">Active Workspace Directory</div>
+            <div class="workspace-path-display" id="workspacePath">Loading...</div>
+            <div class="workspace-input-group">
+                <input type="text" id="workspaceInput" placeholder="Paste absolute folder path...">
+                <button onclick="setWorkspace()">Set</button>
+            </div>
+        </div>
+
+        <!-- Files list explorer -->
+        <div class="explorer-panel">
+            <div class="explorer-header">
+                <div class="explorer-title">Files Explorer</div>
+                <button class="refresh-btn" onclick="loadFiles()">Refresh</button>
+            </div>
+            <ul class="file-tree" id="fileTree"></ul>
+        </div>
+
+        <!-- Selected file preview -->
+        <div class="preview-panel" id="previewPanel">
+            <div class="preview-header">
+                <div class="preview-title" id="previewTitle">File Preview</div>
+            </div>
+            <div class="preview-content" id="previewContent">Select a file from the explorer to preview its contents...</div>
+        </div>
+    </aside>
+
+    <!-- Main conversation layout -->
+    <main class="chat-area">
+        <header class="chat-header">
+            <h1>CodeHive <span>IDE Workspace Dashboard</span></h1>
+            <div class="connection-status">
+                <div id="connDot" class="status-dot"></div>
+                <span id="connText">Disconnected</span>
+            </div>
+        </header>
+
+        <!-- scrolling conversation logs -->
+        <div class="chat-history" id="chatHistory">
+            <!-- Greeting welcome message -->
+            <div class="msg-row assistant">
+                <div class="msg-bubble">
+                    <p><strong>Welcome to CodeHive!</strong></p>
+                    <p>I am your parallel AI engineering agent orchestrator. Switch project directories in the sidebar, inspect workspace files, and run tasks cleanly. Every execution is organized as a collapsible bubble in our conversation stream below.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom input field -->
+        <div class="chat-input-panel">
+            <textarea id="taskTextarea" placeholder="Type your instruction or code task here..." onkeydown="handleKeydown(event)"></textarea>
+            <button id="sendBtn" onclick="sendMessage()">Send</button>
+        </div>
+    </main>
+
+    <script>
+        let ws = null;
+        let currentWorkspace = "";
+        let chatSessionHistory = [];
+
+        // Elements references for current active chat bubble updates
+        let activeStatusLog = null;
+        let activePlanDetails = null;
+        let activePlanGrid = null;
+        let activeFeedDetails = null;
+        let activeFeedContainer = null;
+        let activeConflictsDetails = null;
+        let activeConflictsList = null;
+        let activeResultsDetails = null;
+        let activeResultsContainer = null;
+        let activeErrorBlock = null;
+
+        // Initialize state
+        window.addEventListener("DOMContentLoaded", () => {
+            getWorkspace();
+        });
+
+        // Get active working directory
+        async function getWorkspace() {
+            try {
+                const res = await fetch("/api/project_dir");
+                const data = await res.json();
+                currentWorkspace = data.project_dir;
+                document.getElementById("workspacePath").innerText = currentWorkspace;
+                document.getElementById("workspaceInput").value = currentWorkspace;
+                document.getElementById("connDot").className = "status-dot active";
+                document.getElementById("connText").innerText = "Connected";
+                loadFiles();
+            } catch (err) {
+                console.error("Failed to load workspace dir:", err);
+                document.getElementById("connDot").className = "status-dot";
+                document.getElementById("connText").innerText = "Disconnected";
+            }
+        }
+
+        // Set active working directory
+        async function setWorkspace() {
+            const inputVal = document.getElementById("workspaceInput").value.trim();
+            if (!inputVal) return;
+
+            try {
+                const res = await fetch("/api/set_project_dir", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ path: inputVal })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    currentWorkspace = data.project_dir;
+                    document.getElementById("workspacePath").innerText = currentWorkspace;
+                    document.getElementById("workspaceInput").value = currentWorkspace;
+                    loadFiles();
+                } else {
+                    alert(`Failed to set directory: ${data.detail}`);
+                }
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        // Fetch directory files recursive list
+        async function loadFiles() {
+            const tree = document.getElementById("fileTree");
+            tree.innerHTML = "<li>Loading directory...</li>";
+
+            try {
+                const res = await fetch("/api/files");
+                const data = await res.json();
+                tree.innerHTML = "";
+
+                if (!data.files || data.files.length === 0) {
+                    tree.innerHTML = "<li>No files found in workspace directory</li>";
+                    return;
+                }
+
+                data.files.forEach(f => {
+                    const li = document.createElement("li");
+                    li.className = "file-item";
+                    li.innerText = `📄 ${f.path}`;
+                    li.onclick = () => showPreview(f.path, li);
+                    tree.appendChild(li);
+                });
+            } catch (err) {
+                tree.innerHTML = "<li>Failed to load directory files</li>";
+            }
+        }
+
+        // Preview file contents
+        async function showPreview(filePath, element) {
+            // Remove active status on file explorer elements
+            document.querySelectorAll(".file-item").forEach(el => el.classList.remove("active"));
+            element.classList.add("active");
+
+            document.getElementById("previewTitle").innerText = `Preview: ${filePath}`;
+            const container = document.getElementById("previewContent");
+            container.innerText = "Loading file content...";
+
+            try {
+                const res = await fetch(`/api/file?path=${encodeURIComponent(filePath)}`);
+                const data = await res.json();
+                if (res.ok) {
+                    container.innerText = data.content || "(Empty file)";
+                } else {
+                    container.innerText = `Error: ${data.detail}`;
+                }
+            } catch (err) {
+                container.innerText = "Failed to fetch file contents.";
+            }
+        }
+
+        function handleKeydown(event) {
+            if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        }
+
+        // Submit task via WebSocket and render in bubble
+        function sendMessage() {
+            const textarea = document.getElementById("taskTextarea");
+            const sendBtn = document.getElementById("sendBtn");
+            const promptVal = textarea.value.trim();
+
+            if (!promptVal) return;
+
+            // Save user prompt to conversation history
+            chatSessionHistory.push({ role: "user", content: promptVal });
+
+            // Clear input box
+            textarea.value = "";
+            sendBtn.disabled = true;
+
+            // Add user bubble to chat logs
+            const history = document.getElementById("chatHistory");
+            const userRow = document.createElement("div");
+            userRow.className = "msg-row user";
+            userRow.innerHTML = `<div class="msg-bubble">${escapeHtml(promptVal)}</div>`;
+            history.appendChild(userRow);
+
+            // Add assistant bubble container
+            const assistantRow = document.createElement("div");
+            assistantRow.className = "msg-row assistant";
+            
+            assistantRow.innerHTML = `
+                <div class="msg-bubble">
+                    <!-- Live status logs -->
+                    <div class="status-log">Connecting to task loop...</div>
+                    
+                    <!-- Subtasks plan breakdown -->
+                    <details class="plan-box" style="display: none;">
+                        <summary>Plan Breakdown</summary>
+                        <div class="details-content">
+                            <div class="subtasks-grid"></div>
+                        </div>
+                    </details>
+
+                    <!-- Live tool calls timeline -->
+                    <details class="feed-box" style="display: none;">
+                        <summary>Live Worker Feed</summary>
+                        <div class="details-content">
+                            <div class="feed-container"></div>
+                        </div>
+                    </details>
+
+                    <!-- Conflicts alert notifications -->
+                    <details class="conflicts-box" style="display: none;">
+                        <summary>Conflicts / Merges</summary>
+                        <div class="details-content conflicts-list" style="display: flex; flex-direction: column; gap: 0.5rem;">
+                        </div>
+                    </details>
+
+                    <!-- Results worker summaries -->
+                    <details class="results-box" style="display: none;">
+                        <summary>Worker Result Summaries</summary>
+                        <div class="details-content results-container"></div>
+                    </details>
+
+                    <!-- Error card -->
+                    <div class="error-log" style="display: none;"></div>
+                </div>
+            `;
+            
+            history.appendChild(assistantRow);
+            history.scrollTop = history.scrollHeight;
+
+            // Save active element references
+            activeStatusLog = assistantRow.querySelector(".status-log");
+            
+            activePlanDetails = assistantRow.querySelector(".plan-box");
+            activePlanGrid = assistantRow.querySelector(".subtasks-grid");
+            
+            activeFeedDetails = assistantRow.querySelector(".feed-box");
+            activeFeedContainer = assistantRow.querySelector(".feed-container");
+            
+            activeConflictsDetails = assistantRow.querySelector(".conflicts-box");
+            activeConflictsList = assistantRow.querySelector(".conflicts-list");
+            
+            activeResultsDetails = assistantRow.querySelector(".results-box");
+            activeResultsContainer = assistantRow.querySelector(".results-container");
+            
+            activeErrorBlock = assistantRow.querySelector(".error-log");
+
+            // Open websocket connection
+            document.getElementById("connDot").className = "status-dot executing";
+            document.getElementById("connText").innerText = "Executing";
+
+            const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                ws.send(JSON.stringify({ prompt: promptVal, history: chatSessionHistory }));
+            };
+
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+
+                switch (msg.type) {
+                    case "status":
+                        activeStatusLog.innerText = msg.message;
+                        break;
+
+                    case "plan":
+                        renderSubtasks(msg.subtasks);
+                        break;
+
+                    case "tool_call":
+                        renderToolCall(msg);
+                        break;
+
+                    case "worker_done":
+                        renderWorkerDone(msg);
+                        break;
+
+                    case "conflict":
+                        renderConflict(msg);
+                        break;
+
+                    case "execution_warning":
+                        renderExecutionWarning(msg);
+                        break;
+
+                    case "summary":
+                        activeStatusLog.innerText = "Task completed successfully.";
+                        activeStatusLog.style.animation = "none";
+                        finishSession(assistantRow);
+                        break;
+
+                    case "error":
+                        activeStatusLog.style.display = "none";
+                        activeErrorBlock.style.display = "block";
+                        activeErrorBlock.innerText = `Execution Error: ${msg.message}`;
+                        finishSession(assistantRow);
+                        break;
+                }
+                history.scrollTop = history.scrollHeight;
+            };
+
+            ws.onerror = () => {
+                activeStatusLog.style.display = "none";
+                activeErrorBlock.style.display = "block";
+                activeErrorBlock.innerText = "WebSocket error occurred. Connection failed.";
+                finishSession();
+            };
+
+            ws.onclose = () => {
+                document.getElementById("connDot").className = "status-dot";
+                document.getElementById("connText").innerText = "Disconnected";
+            };
+        }
+
+        function finishSession(row) {
+            const sendBtn = document.getElementById("sendBtn");
+            sendBtn.disabled = false;
+            document.getElementById("connDot").className = "status-dot active";
+            document.getElementById("connText").innerText = "Connected";
+            if (ws) {
+                ws.onclose = null;
+                ws.close();
+            }
+
+            if (row) {
+                let assistantContent = "";
+                const resultItems = row.querySelectorAll(".result-item");
+                resultItems.forEach(item => {
+                    assistantContent += item.innerText + "\n\n";
+                });
+                if (assistantContent.trim()) {
+                    chatSessionHistory.push({ role: "assistant", content: assistantContent.trim() });
+                }
+            }
+
+            // Auto refresh explorer directory tree on completion
+            loadFiles();
+        }
+
+        function renderSubtasks(subtasks) {
+            activePlanDetails.style.display = "block";
+            activePlanGrid.innerHTML = "";
+            
+            subtasks.forEach(st => {
+                const card = document.createElement("div");
+                card.className = "subtask-card";
+                card.innerHTML = `
+                    <h4>Subtask ${st.id}: ${escapeHtml(st.title)}</h4>
+                    <p>${escapeHtml(st.instructions)}</p>
+                `;
+                activePlanGrid.appendChild(card);
+            });
+        }
+
+        function renderToolCall(msg) {
+            activeFeedDetails.style.display = "block";
+            activeFeedDetails.open = true; // Auto expand timeline logs
+            
+            const match = msg.agent_name.match(/Worker-(\d+)/);
+            const wIdx = match ? match[1] : "1";
+            
+            const line = document.createElement("div");
+            line.className = "feed-line";
+            
+            const argsStr = Object.entries(msg.args)
+                .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+                .join(", ");
+
+            line.innerHTML = `
+                <span class="worker worker-${wIdx}">[${escapeHtml(msg.agent_name)}]</span>
+                <span class="provider">(via ${escapeHtml(msg.provider_name)})</span>
+                Calling tool <span class="tool">${escapeHtml(msg.tool_name)}</span>(<span class="args">${escapeHtml(argsStr)}</span>)
+            `;
+            activeFeedContainer.appendChild(line);
+            activeFeedContainer.scrollTop = activeFeedContainer.scrollHeight;
+        }
+
+        function renderWorkerDone(msg) {
+            activeResultsDetails.style.display = "block";
+            activeResultsDetails.open = true; // Auto expand results panel
+            
+            const item = document.createElement("div");
+            item.className = "result-item";
+            item.innerHTML = `
+                <div class="result-item-header">Result for Subtask ${msg.subtask_id}: ${escapeHtml(msg.subtask_title)}</div>
+                <div class="result-item-body">${escapeHtml(msg.result)}</div>
+            `;
+            activeResultsContainer.appendChild(item);
+        }
+
+        function renderConflict(msg) {
+            activeConflictsDetails.style.display = "block";
+            activeConflictsDetails.open = true;
+
+            const card = document.createElement("div");
+            const workersStr = msg.workers.map(w => `Worker-${w}`).join(", ");
+            const winnersStr = msg.winners.map(w => `Worker-${w}`).join(", ");
+
+            if (msg.resolved) {
+                card.className = "conflict-card resolved";
+                card.innerHTML = `
+                    <strong>Conflict Auto-Merged:</strong> ${escapeHtml(msg.path)} was modified concurrently by: ${escapeHtml(workersStr)}.<br><br>
+                    <strong>IMPORTANT:</strong> Auto-merge is best-effort. Confirm merged contents directly.
+                `;
+            } else {
+                const errSuffix = msg.error ? ` (${escapeHtml(msg.error)})` : "";
+                card.className = "conflict-card unresolved";
+                card.innerHTML = `
+                    <strong>Conflict Detected:</strong> ${escapeHtml(msg.path)} was modified concurrently by: ${escapeHtml(workersStr)}.<br>
+                    Final matches: ${escapeHtml(winnersStr || 'None')}<br>
+                    Auto-merge failed${escapeHtml(errSuffix)} — manual review required.
+                `;
+            }
+            activeConflictsList.appendChild(card);
+        }
+
+        function renderExecutionWarning(msg) {
+            activeConflictsDetails.style.display = "block";
+            activeConflictsDetails.open = true;
+
+            const card = document.createElement("div");
+            card.className = "conflict-card unresolved";
+            card.innerHTML = `
+                <strong>Execution Verification Warning:</strong> Worker-${msg.subtask_id} wrote code to <strong>${escapeHtml(msg.path)}</strong> but no real execution check was observed in tool calls. Only syntax checks or no runs were found.
+            `;
+            activeConflictsList.appendChild(card);
+        }
+
+        function escapeHtml(str) {
+            if (!str) return "";
+            return str
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+    </script>
+</body>
+</html>
