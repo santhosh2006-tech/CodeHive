@@ -1,1 +1,0 @@
-# WORKER-3-APPLIED
