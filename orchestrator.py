@@ -334,13 +334,16 @@ You MUST return ONLY a JSON object of this exact schema. Do not output any markd
                     else:
                         print(f"\n[Orchestrator] WARNING: {worktree_dir} is still a registered git worktree — skipping rmtree to avoid data loss.")
 
-                # Create a fresh worktree on a new branch
                 res_wt = subprocess.run(
                     f"git worktree add {worktree_dir} -b task/{subtask_id}",
                     shell=True, capture_output=True, text=True
                 )
                 if res_wt.returncode != 0:
                     print(f"\n[Orchestrator] ERROR: git worktree add failed for Worker-{subtask_id}: {res_wt.stderr.strip()}")
+                else:
+                    # INSTRUMENTATION: list files inside the worktree directory right after creation
+                    wt_ls = subprocess.run("dir", shell=True, capture_output=True, text=True, cwd=worktree_dir)
+                    print(f"\n[Orchestrator] Files in worktree {worktree_dir} at creation:\n{wt_ls.stdout}")
 
             # Build worker port note (distinct port per worker to avoid collisions)
             def make_worker(subtask, wave_idx=wave_idx):

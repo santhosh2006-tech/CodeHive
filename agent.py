@@ -133,6 +133,9 @@ class Agent:
                     }
                     if self.tools_schema:
                         kwargs["tools"] = self.tools_schema
+                    
+                    # INSTRUMENTATION: print actual tools_schema being sent
+                    print(f"\n[{self.name}] API request tools_schema: {self.tools_schema}")
                         
                     response = p_client.chat.completions.create(**kwargs)
                     return response, p_idx, p_name
