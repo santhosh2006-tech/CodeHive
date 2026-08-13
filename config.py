@@ -1,1 +1,1 @@
-# Base file placeholder
+DB_NAME = 'user_db.sqlite'
