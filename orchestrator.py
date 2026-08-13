@@ -2,30 +2,15 @@ import json
 import re
 import asyncio
 import os
-import hashlib
 import ast
 import time
 import threading
+import subprocess
+import shutil
+import inspect
 from concurrent.futures import ThreadPoolExecutor
 from agent import Agent
 import tools
-
-class ClaimRegistry:
-    def __init__(self):
-        self.lock = threading.Lock()
-        self.claims = {}          # norm_path -> worker_id
-        self.contested = []       # list of (norm_path, worker_id, existing_worker_id)
-
-    def claim(self, file_path: str, worker_id: str):
-        norm_path = os.path.normpath(file_path)
-        with self.lock:
-            if norm_path in self.claims:
-                existing = self.claims[norm_path]
-                if existing != worker_id:
-                    self.contested.append((norm_path, worker_id, existing))
-                    print(f"\n[CLAIM REGISTRY] WARNING: Contested claim! Worker-{worker_id} intends to touch {norm_path} (already claimed by Worker-{existing}).")
-            else:
-                self.claims[norm_path] = worker_id
 
 def parse_planner_response(content: str, fallback_request: str) -> dict:
     """Parses the planner's JSON response, stripping markdown fences and falling back on error."""
@@ -80,10 +65,34 @@ class Orchestrator:
         else:
             self.providers = providers or []
 
-    def _send_completion_with_retry(self, messages, response_format=None):
+    def _create_chat_completion(self, client, kwargs: dict, request_timeout: float | None):
+        """Call chat completions with a per-request timeout when the SDK supports it."""
+        if request_timeout is not None:
+            try:
+                sig = inspect.signature(client.chat.completions.create)
+                supports_timeout = (
+                    "timeout" in sig.parameters or
+                    any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+                )
+            except Exception:
+                supports_timeout = True
+
+            if supports_timeout:
+                kwargs = dict(kwargs)
+                kwargs["timeout"] = request_timeout
+
+        return client.chat.completions.create(**kwargs)
+
+    def _send_completion_with_retry(
+        self,
+        messages,
+        response_format=None,
+        max_retries: int = 3,
+        base_backoff: int = 10,
+        request_timeout: float | None = 30.0,
+        fallback_on_client_error: bool = False,
+    ):
         """Helper to send chat completion with multi-provider fallback and retry logic."""
-        max_retries = 3
-        base_backoff = 10
         num_providers = len(self.providers)
         
         if num_providers == 0:
@@ -104,7 +113,7 @@ class Orchestrator:
                     if response_format:
                         kwargs["response_format"] = response_format
                         
-                    response = p_client.chat.completions.create(**kwargs)
+                    response = self._create_chat_completion(p_client, kwargs, request_timeout)
                     return response.choices[0].message.content or ""
                     
                 except Exception as e:
@@ -113,9 +122,10 @@ class Orchestrator:
                     if status_code in (400, 401, 403, 404, 422):
                         is_transient = False
                     
-                    if is_transient and num_providers > 1 and offset < num_providers - 1:
+                    should_fallback = is_transient or fallback_on_client_error
+                    if should_fallback and num_providers > 1 and offset < num_providers - 1:
                         next_provider = self.providers[offset + 1]
-                        print(f"\n[Orchestrator] WARNING: {p_name} failed (status {status_code or 'error'}). Falling back immediately to {next_provider['name']}...")
+                        print(f"\n[{p_name}] WARNING: {p_name} failed (status {status_code or 'error'}). Falling back immediately to {next_provider['name']}...")
                         continue
                         
                     if offset == num_providers - 1:
@@ -123,18 +133,86 @@ class Orchestrator:
                             if not is_transient:
                                 raise e
                             delay = base_backoff * (2 ** attempt)
+                            last_err = str(e)
+                            print(f"\n[{p_name}] WARNING: All providers failed. Retrying in {delay} seconds (attempt {attempt + 1}/{max_retries}). Last error: {last_err}")
                             time.sleep(delay)
                         else:
                             raise e
 
-    def plan(self, user_request: str) -> list:
+    def _reconcile_conflict(self, path: str, conf_content: str) -> str:
+        """Invokes the LLM reconciler to resolve merge conflict markers inside a file.
+        Only called when git reports a real merge conflict (<<<<<<< markers present).
+        """
+        prompt = f"""You are a senior software conflict resolution reconciler.
+Your task is to merge the conflicting edits in a file containing Git conflict markers into a single resolved version.
+Preserve the intent of BOTH sides of the conflict. Do not add new imports, classes, or functions that are not present in either side.
+
+Conflicted File Content:
+---
+{conf_content}
+---
+
+You must return ONLY the full resolved file content inside a markdown code block (e.g. ```python). Do not output any other reasoning or extra text.
+"""
+        messages = [{"role": "user", "content": prompt}]
+        return self._send_completion_with_retry(messages)
+
+    def get_preflight_warnings(self, subtasks: list) -> list[str]:
+        """Runs a pre-flight sanity check on instructions to identify potential over-splitting.
+        If two or more subtasks reference the same filename, a warning is returned.
+        """
+        file_pattern = re.compile(r'\b[\w\-]+\.(?:py|html|css|js|json|md|txt|sh|bat)\b', re.IGNORECASE)
+        
+        file_references = {}
+        for st in subtasks:
+            st_id = st.get("id", "unknown")
+            instr = st.get("instructions", "")
+            found_files = set(file_pattern.findall(instr))
+            for filename in found_files:
+                file_references.setdefault(filename.lower(), []).append((st_id, filename))
+                
+        warnings = []
+        for filename_lower, refs in file_references.items():
+            if len(refs) > 1:
+                st_ids = [r[0] for r in refs]
+                original_name = refs[0][1]
+                warnings.append(
+                    f"[Planner] WARNING: {len(st_ids)} subtasks all reference {original_name} "
+                    f"(Subtasks: {', '.join(st_ids)}) \u2014 this task may have been over-split."
+                )
+        return warnings
+
+    def plan(self, user_request: str, history: list = None) -> list:
         """Asks the planner model to break down the task into subtasks."""
+        history_str = ""
+        if history:
+            history_str = "--- CONVERSATION HISTORY ---\n"
+            for turn in history:
+                role_label = "User" if turn.get("role") == "user" else "Assistant (CodeHive)"
+                content = turn.get("content", "")
+                history_str += f"{role_label}: {content}\n\n"
+            history_str += "--- END OF CONVERSATION HISTORY ---\n\n"
+
         planner_prompt = f"""You are a software architect task planner.
-Your job is to break down the user's coding request into 1 to 4 independent subtasks that can be executed in parallel.
-For each subtask, provide:
-- id: A unique string identifier starting from "1"
-- title: A short description of the subtask
-- instructions: Detailed, step-by-step instructions for a senior developer agent to implement this subtask.
+Your job is to break down the user's coding request into 1 to 4 subtasks.
+
+--- SPLITTING RULES ---
+Only create MULTIPLE subtasks when components are GENUINELY INDEPENDENT:
+1. The task centers on a single file or a small number of tightly-related files where changes are naturally sequential, interdependent, or overlapping (e.g. "a module with a few functions" is one single coherent unit of work, NOT one subtask per function).
+2. The task is small enough that a single developer would write it top-to-bottom in one sitting, rather than collaborating with others.
+3. Splitting would require two or more agents to edit or touch the same file to complete their subtask.
+
+Only split into multiple subtasks when the components are GENUINELY INDEPENDENT:
+- Separate files that do not read or modify each other's code.
+- Genuinely separate concerns (e.g. "Backend API endpoint" + "separate testing script file").
+- "The add function" + "the subtract function" in the same file is NOT a valid split—that must be a single subtask.
+
+--- CONTENT DEPENDENCY SEQUENCING ---
+Some subtasks are CONTENT-DEPENDENT even when they touch different files:
+1. **Tests & Docs**: A test file depends on the real implementation it tests; documentation depends on the real API/interface it describes.
+2. **Calling/Integration Imports**: If one subtask implements a core function, class, or module and another subtask implements an interface or API that imports/calls it, the caller subtask MUST depend on the implementer subtask.
+
+These are NOT independent, even though they are separate files. You MUST order the dependent subtask to run AFTER the subtask(s) it depends on by referencing its ID in the "depends_on" array.
 
 You MUST return ONLY a JSON object of this exact schema. Do not output any markdown code blocks or additional text:
 {{
@@ -142,195 +220,306 @@ You MUST return ONLY a JSON object of this exact schema. Do not output any markd
     {{
       "id": "1",
       "title": "Subtask Title",
-      "instructions": "Instructions here..."
+      "instructions": "Instructions here...",
+      "depends_on": []
+    }},
+    {{
+      "id": "2",
+      "title": "Subtask 2 Title",
+      "instructions": "Instructions here...",
+      "depends_on": ["1"]
     }}
   ]
 }}
 
-User request: {user_request}"""
+{history_str}User request: {user_request}"""
 
         try:
             messages = [{"role": "user", "content": planner_prompt}]
-            text = self._send_completion_with_retry(messages, response_format={"type": "json_object"})
+            text = self._send_completion_with_retry(
+                messages,
+                response_format={"type": "json_object"},
+                max_retries=0,
+                request_timeout=30.0,
+                fallback_on_client_error=True,
+            )
         except Exception as e:
             text = f"ERROR: {str(e)}"
 
         data = parse_planner_response(text, user_request)
         return data.get("subtasks", [])
 
-    async def run_workers(self, subtasks: list, on_tool_call=None) -> tuple[dict, list]:
-        """Runs the worker agents concurrently using a ThreadPoolExecutor.
+    async def run_workers(self, subtasks: list, on_tool_call=None, history: list = None) -> tuple[dict, list, list]:
+        """Runs the worker agents concurrently in dependency waves using Git worktrees.
         
         Returns:
-            A tuple of (results, conflicts) where conflicts is a list of detected write conflicts.
+            A tuple of (results, conflicts, execution_warnings).
         """
         loop = asyncio.get_running_loop()
-        
-        # Instantiate thread-safe claim registry
-        registry = ClaimRegistry()
+        subtask_map = {st["id"]: st for st in subtasks}
 
-        def make_wrapped_write_file(worker_id):
-            def wrapped_write_file(path: str, content: str) -> str:
-                registry.claim(path, worker_id)
-                return tools.write_file(path, content)
-            wrapped_write_file.__name__ = "write_file"
-            return wrapped_write_file
+        # Stage 1: Git repo check & auto-init
+        if not os.path.exists(".git"):
+            subprocess.run("git init", shell=True, capture_output=True, text=True)
+            subprocess.run('git config user.name "CodeHive Agent"', shell=True, capture_output=True, text=True)
+            subprocess.run('git config user.email "agent@codehive.local"', shell=True, capture_output=True, text=True)
+            subprocess.run("git add -A", shell=True, capture_output=True, text=True)
+            subprocess.run('git commit -m "Initial commit by CodeHive"', shell=True, capture_output=True, text=True)
+            subprocess.run("git branch -M main", shell=True, capture_output=True, text=True)
 
-        # Snapshot initial files in the workspace
-        initial_files = {}
-        for root, dirs, files in os.walk("."):
-            if any(p in root for p in ("venv", ".git", "__pycache__", ".system_generated", "race_test_scratch")):
-                continue
-            for f in files:
-                rel_path = os.path.normpath(os.path.join(root, f))
-                try:
-                    with open(rel_path, "r", encoding="utf-8") as file_obj:
-                        initial_files[rel_path] = file_obj.read()
-                except Exception:
-                    pass
+        res_br = subprocess.run("git branch --show-current", shell=True, capture_output=True, text=True)
+        active_branch = res_br.stdout.strip() or "main"
 
-        with ThreadPoolExecutor(max_workers=max(1, len(subtasks))) as executor:
-            futures = []
-            for subtask in subtasks:
+        # Helper: compute dependency waves
+        def get_execution_waves(subtasks_list: list) -> list[list[dict]]:
+            dependencies = {}
+            for st in subtasks_list:
+                st_id = st["id"]
+                depends = st.get("depends_on", [])
+                if isinstance(depends, list):
+                    dependencies[st_id] = set(str(d) for d in depends if str(d) in subtask_map)
+                else:
+                    dependencies[st_id] = set()
+
+            waves_list = []
+            completed = set()
+            remaining = list(subtasks_list)
+            while remaining:
+                wave = [st for st in remaining if dependencies[st["id"]].issubset(completed)]
+                if not wave:
+                    wave = [remaining[0]]
+                waves_list.append(wave)
+                for st in wave:
+                    completed.add(st["id"])
+                    remaining.remove(st)
+            return waves_list
+
+        waves = get_execution_waves(subtasks)
+        results = {}
+        all_conflicts = []
+        execution_warnings = []
+        subtask_files_written = {}
+
+        for wave_idx, wave in enumerate(waves):
+            # Set up worktrees for this wave
+            for subtask in wave:
+                subtask_id = subtask["id"]
+                worktree_dir = os.path.abspath(os.path.join("..", f"codehive-worker-{subtask_id}"))
+
+                # Remove any leftover worktree/branch from a previous crashed run.
+                # git worktree remove unregisters the worktree from git's registry,
+                # but it does NOT delete the directory if it wasn't a registered worktree.
+                # We must shutil.rmtree the directory too, otherwise git worktree add
+                # will fail with "already exists" when a plain dir is left over.
+                subprocess.run(f"git worktree remove --force {worktree_dir}", shell=True, capture_output=True, text=True)
+                subprocess.run(f"git branch -D task/{subtask_id}", shell=True, capture_output=True, text=True)
+                if os.path.exists(worktree_dir):
+                    shutil.rmtree(worktree_dir, ignore_errors=True)
+
+                # Create a fresh worktree on a new branch
+                res_wt = subprocess.run(
+                    f"git worktree add {worktree_dir} -b task/{subtask_id}",
+                    shell=True, capture_output=True, text=True
+                )
+                if res_wt.returncode != 0:
+                    print(f"\n[Orchestrator] ERROR: git worktree add failed for Worker-{subtask_id}: {res_wt.stderr.strip()}")
+
+            # Build worker port note (distinct port per worker to avoid collisions)
+            def make_worker(subtask, wave_idx=wave_idx):
+                subtask_id = subtask["id"]
+                worktree_dir = os.path.abspath(os.path.join("..", f"codehive-worker-{subtask_id}"))
+                worker_port = 9000 + (100 * wave_idx) + int(subtask_id)
+                port_note = (
+                    f"NOTE: For any web servers / APIs, you MUST run them on port {worker_port} "
+                    f"(to avoid port conflicts with other parallel workers or the main server).\n\n"
+                )
+
+                # Build dependency context
+                dep_context = ""
+                if subtask.get("depends_on"):
+                    written_by_deps = []
+                    for dep_id in subtask["depends_on"]:
+                        written_by_deps.extend(subtask_files_written.get(str(dep_id), []))
+                    if written_by_deps:
+                        dep_context = (
+                            "--- DEPENDENCY FILES ---\n"
+                            f"The following files were written by subtasks this depends on: {', '.join(written_by_deps)}.\n"
+                            "You MUST call read_file() on each of these before writing code that imports or calls them.\n"
+                            "--- END DEPENDENCY FILES ---\n\n"
+                        )
+
+                execution_rules = """--- EXECUTION VERIFICATION RULES ---
+Writing code is NOT enough. Before finishing your subtask, you MUST actually RUN what you wrote and observe real output.
+
+- Standalone script/function: execute it (e.g. `python script.py`) and show the real output.
+- Web API/server (Flask, FastAPI, etc.): start it in the BACKGROUND on your assigned port, send real requests to endpoints via `curl` or Python requests, confirm real responses, THEN stop the server process before finishing.
+- Test file (pytest/unittest): RUN the test suite (e.g. `python -m pytest <file>`) and report real pass/fail results.
+- Non-executable content (README, config, static assets): existing syntax/sanity checks are sufficient.
+After testing, you MUST stop any server process you started, whether the test succeeded or failed.
+--- END EXECUTION VERIFICATION RULES ---
+
+"""
+                # Wrap tools to execute relative to the worktree path
                 worker_tools = []
-                for t in self.tools:
-                    if t.__name__ == "write_file":
-                        worker_tools.append(make_wrapped_write_file(subtask["id"]))
+                for tool in self.tools:
+                    if tool.__name__ == "write_file":
+                        def wrapped_write(path: str, content: str, wpath=worktree_dir) -> str:
+                            abs_path = os.path.normpath(os.path.join(wpath, path))
+                            if not abs_path.startswith(os.path.abspath(wpath)):
+                                return "ERROR: Path traversal detected."
+                            return tools.write_file(abs_path, content)
+                        wrapped_write.__name__ = "write_file"
+                        wrapped_write.__doc__ = tools.write_file.__doc__
+                        worker_tools.append(wrapped_write)
+                    elif tool.__name__ == "read_file":
+                        def wrapped_read(path: str, wpath=worktree_dir) -> str:
+                            abs_path = os.path.normpath(os.path.join(wpath, path))
+                            if not abs_path.startswith(os.path.abspath(wpath)):
+                                return "ERROR: Path traversal detected."
+                            return tools.read_file(abs_path)
+                        wrapped_read.__name__ = "read_file"
+                        wrapped_read.__doc__ = tools.read_file.__doc__
+                        worker_tools.append(wrapped_read)
+                    elif tool.__name__ == "run_bash":
+                        def wrapped_bash(command: str, wpath=worktree_dir) -> str:
+                            return tools.run_bash(command, cwd=wpath)
+                        wrapped_bash.__name__ = "run_bash"
+                        wrapped_bash.__doc__ = tools.run_bash.__doc__
+                        worker_tools.append(wrapped_bash)
                     else:
-                        worker_tools.append(t)
+                        worker_tools.append(tool)
 
                 agent = Agent(
-                    name=f"Worker-{subtask['id']}",
+                    name=f"Worker-{subtask_id}",
                     role=subtask["title"],
-                    system_instruction=f"""You are a senior developer agent working on a subtask: '{subtask['title']}'.
-Instructions:
-{subtask['instructions']}
-
-You have access to file and shell tools in the workspace directory.
-You MUST write real working code (not pseudocode) and must finish with a plain-text summary of your actions once done.
-Do not call any tools after your final summary.""",
+                    system_instruction=(
+                        f"You are a senior developer agent working on subtask '{subtask['title']}'.\n\n"
+                        f"{port_note}"
+                        f"{dep_context}"
+                        f"{execution_rules}"
+                        f"Instructions:\n{subtask['instructions']}\n\n"
+                        "You MUST write real working code and finish with a plain-text summary of your actions once done.\n"
+                        "Do not call any tools after your final summary."
+                    ),
                     providers=self.providers,
                     tools=worker_tools,
                     on_tool_call=on_tool_call
                 )
-                
-                future = loop.run_in_executor(
-                    executor,
-                    agent.run,
-                    subtask["instructions"]
-                )
-                futures.append((subtask["id"], future))
+                return subtask_id, agent
 
-            results = {}
-            agent_writes = {}
-            for subtask_id, future in futures:
-                text, writes = await future
-                results[subtask_id] = text
-                agent_writes[subtask_id] = writes
+            # Launch all workers in this wave concurrently
+            wave_futures = []
+            with ThreadPoolExecutor(max_workers=max(1, len(wave))) as executor:
+                agents_in_wave = [make_worker(st) for st in wave]
+                for subtask_id, agent in agents_in_wave:
+                    # History context is already embedded in the agent's system_instruction;
+                    # Agent.run() only takes the immediate instructions string.
+                    future = loop.run_in_executor(executor, agent.run, subtask["instructions"])
+                    wave_futures.append((subtask_id, future))
 
-            # Map from file path to list of writes by different agents
-            file_writes = {}
-            for worker_id, writes in agent_writes.items():
-                for w in writes:
-                    norm_path = os.path.normpath(w["path"])
-                    file_writes.setdefault(norm_path, []).append((worker_id, w))
+                wave_results = {}
+                wave_writes = {}
+                wave_tool_calls = {}
+                for subtask_id, future in wave_futures:
+                    try:
+                        text, writes, tool_calls = await future
+                    except Exception as e:
+                        error_type = type(e).__name__
+                        text = f"ERROR: {error_type}: {e}"
+                        writes = []
+                        tool_calls = []
+                        print(f"\n[Orchestrator] Worker-{subtask_id} failed: {text}")
 
-            # Detect collisions and perform automatic merge resolution (v3)
-            conflicts = []
-            for path, writes_list in file_writes.items():
-                if len(writes_list) > 1:
-                    final_hash = None
-                    if os.path.exists(path):
-                        try:
-                            with open(path, "r", encoding="utf-8") as f:
-                                final_content = f.read()
-                                final_hash = hashlib.sha256(final_content.encode("utf-8")).hexdigest()
-                        except Exception:
-                            pass
-                    
-                    winners = []
-                    losers = []
-                    for worker_id, w in writes_list:
-                        if final_hash and w["hash"] == final_hash:
-                            winners.append(worker_id)
-                        else:
-                            losers.append((worker_id, w))
+                    wave_results[subtask_id] = text
+                    wave_writes[subtask_id] = writes
+                    wave_tool_calls[subtask_id] = tool_calls
+                    subtask_files_written[subtask_id] = [os.path.normpath(w["path"]) for w in writes]
 
-                    resolved = False
-                    merged_content = None
-                    merge_error = None
+                    # Execution verification audit
+                    has_python_writes = any(w["path"].endswith(".py") for w in writes)
+                    if has_python_writes:
+                        has_execution = False
+                        for tc in tool_calls:
+                            if tc.get("name") == "run_bash":
+                                cmd = tc.get("arguments", {}).get("command", "").lower()
+                                if any(term in cmd for term in ("python", "pytest", "unittest", "curl", "requests")):
+                                    if "py_compile" not in cmd:
+                                        has_execution = True
+                                        break
+                        if not has_execution:
+                            py_file = next(w["path"] for w in writes if w["path"].endswith(".py"))
+                            execution_warnings.append({
+                                "subtask_id": subtask_id,
+                                "path": py_file,
+                                "message": f"[WARNING] Worker-{subtask_id} wrote code to {py_file} but only syntax checks or no execution runs were observed."
+                            })
 
-                    if os.path.exists(path):
-                        initial_content = initial_files.get(path, "")
-                        subtask_map = {st["id"]: st for st in subtasks}
+            results.update(wave_results)
 
-                        try:
-                            prompt = f"""You are a senior software conflict resolution reconciler.
-Your task is to merge multiple divergent versions of a file into a single resolved version.
-Below is the original file content, followed by the divergent versions written by different developer agents, along with their respective instructions explaining the intent of their changes.
+            # Commit each worktree and merge back to active branch
+            for subtask in wave:
+                subtask_id = subtask["id"]
+                worktree_dir = os.path.abspath(os.path.join("..", f"codehive-worker-{subtask_id}"))
 
-Original File Content:
----
-{initial_content}
----
+                subprocess.run("git add -A", shell=True, capture_output=True, text=True, cwd=worktree_dir)
+                subprocess.run(f'git commit -m "Commit by Worker {subtask_id}"', shell=True, capture_output=True, text=True, cwd=worktree_dir)
 
-Divergent Versions:
-"""
-                            for worker_id, w in writes_list:
-                                instr = subtask_map.get(worker_id, {}).get("instructions", "No instructions provided.")
-                                prompt += f"\nVersion by Worker-{worker_id} (Instructions: {instr}):\n"
-                                prompt += f"---\n{w['content']}\n---\n"
+                cmd_merge = f"git merge task/{subtask_id} -m \"Merge Worker {subtask_id}\""
+                res_merge = subprocess.run(cmd_merge, shell=True, capture_output=True, text=True)
 
-                            prompt += """
-Please merge these changes into a single file that preserves the INTENT of all edits (e.g. if one worker removed routes, another added logging, and a third refactored database initialization, all these edits should be cleanly combined).
-Ensure the output is syntactically valid and compiles.
-You must return the full merged file content inside a markdown code block starting with ```python (or the appropriate language fence). Do not output any other reasoning or extra text.
-"""
-                            messages = [{"role": "user", "content": prompt}]
-                            response_text = self._send_completion_with_retry(messages)
+                if res_merge.returncode != 0:
+                    # Real git merge conflict — detect conflicted files
+                    res_conf = subprocess.run("git diff --name-only --diff-filter=U", shell=True, capture_output=True, text=True)
+                    conf_files = [f.strip() for f in res_conf.stdout.splitlines() if f.strip()]
 
-                            # Extract code content
-                            raw_merged = response_text.strip()
-                            if "```" in raw_merged:
-                                match = re.search(r"```(?:\w+)?\s*(.*?)\s*```", raw_merged, re.DOTALL)
-                                if match:
-                                    merged_content = match.group(1).strip()
+                    for path in conf_files:
+                        resolved = False
+                        merged_content = None
+                        merge_error = None
+
+                        if os.path.exists(path):
+                            try:
+                                with open(path, "r", encoding="utf-8") as f_conf:
+                                    conf_content = f_conf.read()
+
+                                response_text = self._reconcile_conflict(path, conf_content)
+
+                                raw_merged = response_text.strip()
+                                if "```" in raw_merged:
+                                    match = re.search(r"```(?:\w+)?\s*(.*?)\s*```", raw_merged, re.DOTALL)
+                                    merged_content = match.group(1).strip() if match else raw_merged
                                 else:
                                     merged_content = raw_merged
-                            else:
-                                merged_content = raw_merged
 
-                            if path.endswith(".py"):
-                                try:
+                                if path.endswith(".py"):
                                     ast.parse(merged_content)
-                                except SyntaxError as se:
-                                    raise ValueError(f"Merged output has invalid Python syntax: {se}")
 
-                            is_identical = False
-                            for worker_id, w in writes_list:
-                                if merged_content == w["content"]:
-                                    is_identical = True
-                                    break
-                            if is_identical:
-                                raise ValueError("Merged output is byte-identical to one of the original inputs (failed to combine changes)")
+                                with open(path, "w", encoding="utf-8") as f_out:
+                                    f_out.write(merged_content)
 
-                            with open(path, "w", encoding="utf-8") as f_out:
-                                f_out.write(merged_content)
-                            resolved = True
+                                subprocess.run(f"git add {path}", shell=True, capture_output=True, text=True)
+                                resolved = True
 
-                        except Exception as ex:
-                            merge_error = str(ex)
-                            resolved = False
-                            merged_content = None
+                            except Exception as ex:
+                                merge_error = str(ex)
 
-                    conflicts.append({
-                        "path": path,
-                        "workers": [worker_id for worker_id, _ in writes_list],
-                        "winners": winners,
-                        "losers": losers,
-                        "resolved": resolved,
-                        "merged_content": merged_content,
-                        "error": merge_error
-                    })
+                        all_conflicts.append({
+                            "path": path,
+                            "workers": [subtask_id],
+                            "winners": [],
+                            "losers": [],
+                            "resolved": resolved,
+                            "merged_content": merged_content,
+                            "error": merge_error
+                        })
 
-            return results, conflicts
+                    subprocess.run('git commit -m "Resolved merge conflicts"', shell=True, capture_output=True, text=True)
+
+            # Cleanup worktrees for this wave
+            for subtask in wave:
+                subtask_id = subtask["id"]
+                worktree_dir = os.path.abspath(os.path.join("..", f"codehive-worker-{subtask_id}"))
+                subprocess.run(f"git worktree remove --force {worktree_dir}", shell=True, capture_output=True, text=True)
+                subprocess.run(f"git branch -D task/{subtask_id}", shell=True, capture_output=True, text=True)
+
+        return results, all_conflicts, execution_warnings
