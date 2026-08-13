@@ -1,19 +1,16 @@
-import logging
-from logger import Logger
-from service_registry import ServiceRegistry
+# Import config
+from config import *
 
-DB_HOST = 'localhost'
-DB_PORT = 5432
-DB_USERNAME = 'username'
-DB_PASSWORD = 'password'
-DB_NAME = 'user_db'
-
-SQLALCHEMY_DATABASE_URI = f'postgresql://{DB_USERNAME}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}'
-
-REGISTRY_CONFIG = {
+# Define gateway route properties
+gateway_route_properties = {
     'host': 'localhost',
-    'port': 9002
-}
-
-logger = Logger().get_logger()
-registry = ServiceRegistry()
+    'port': 9103,
+    'routes': {
+        '/users': {
+            'methods': ['GET', 'POST']
+        },
+        '/users/<int:user_id>': {
+            'methods': ['GET', 'PUT', 'DELETE']
+        }
+    }
+)
