@@ -676,5 +676,72 @@ class TestCodeHive(unittest.TestCase):
         finally:
             time.sleep = original_sleep
 
+    def test_16_wave_dependency_scenario(self):
+        print("\n[TEST] Running wave dependency scenario test...")
+        import os
+        import json
+        
+        dep_file = "dependency_file.py"
+        
+        try:
+            class MockChatCompletions:
+                def create(self, model, messages, tools=None, response_format=None):
+                    user_msg = messages[-1]["content"] if isinstance(messages[-1], dict) else str(messages[-1])
+                    
+                    # Subtask 1 runs in Wave 1
+                    if "Subtask 1" in user_msg or "dependency_file" in user_msg:
+                        # Wave 1 mock: Worker 1 writes the dependency file
+                        turn = len(messages)
+                        if turn == 2:
+                            args_json = json.dumps({"path": dep_file, "content": "print('Hello from dep')"})
+                            return MockResponse(
+                                content=None,
+                                tool_calls=[MockToolCall(name="write_file", arguments=args_json, call_id="call_dep")]
+                            )
+                        else:
+                            return MockResponse(content="Done", tool_calls=None)
+                    
+                    # Subtask 2 runs in Wave 2, depends on Subtask 1
+                    elif "Subtask 2" in user_msg or "DEPENDENCY FILES" in user_msg:
+                        # Wave 2 mock: Worker 2 reads the dependency file first
+                        turn = len(messages)
+                        if turn == 2:
+                            args_json = json.dumps({"path": dep_file})
+                            return MockResponse(
+                                content=None,
+                                tool_calls=[MockToolCall(name="read_file", arguments=args_json, call_id="call_read")]
+                            )
+                        else:
+                            return MockResponse(content="Successfully read dependency file!", tool_calls=None)
+                    else:
+                        return MockResponse(content="Unhandled", tool_calls=None)
+
+            class MockChat:
+                def __init__(self):
+                    self.completions = MockChatCompletions()
+
+            class MockClient:
+                def __init__(self):
+                    self.chat = MockChat()
+
+            mock_client = MockClient()
+            # Pass read_file and write_file tools to the Orchestrator
+            orchestrator = Orchestrator(client=mock_client, tools=[tools.read_file, tools.write_file])
+            
+            subtasks = [
+                {"id": "1", "title": "Subtask 1", "instructions": "Write dependency_file.py"},
+                {"id": "2", "title": "Subtask 2", "instructions": "Read dependency_file.py", "depends_on": ["1"]}
+            ]
+            
+            results, conflicts, execution_warnings = asyncio.run(orchestrator.run_workers(subtasks))
+            
+            self.assertEqual(len(conflicts), 0)
+            self.assertIn("1", results)
+            self.assertIn("2", results)
+            print("-> Wave dependency scenario test PASSED.")
+        finally:
+            if os.path.exists(dep_file):
+                os.remove(dep_file)
+
 if __name__ == "__main__":
     unittest.main()
