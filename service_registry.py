@@ -1,5 +1,3 @@
-# Service Registry
-
 class ServiceRegistry:
     def __init__(self):
         self.services = {}
@@ -9,3 +7,7 @@ class ServiceRegistry:
 
     def get_service_url(self, service_name):
         return self.services.get(service_name)
+
+    def unregister_service(self, service_name):
+        if service_name in self.services:
+            del self.services[service_name]
