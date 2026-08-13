@@ -1,1 +1,1 @@
-base content
+print('hello')
