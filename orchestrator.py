@@ -314,7 +314,24 @@ You MUST return ONLY a JSON object of this exact schema. Do not output any markd
                 subprocess.run(f"git worktree remove --force {worktree_dir}", shell=True, capture_output=True, text=True)
                 subprocess.run(f"git branch -D task/{subtask_id}", shell=True, capture_output=True, text=True)
                 if os.path.exists(worktree_dir):
-                    shutil.rmtree(worktree_dir, ignore_errors=True)
+                    # Safety guard: only delete the directory if git no longer considers
+                    # it a registered worktree. This prevents shutil.rmtree from silently
+                    # destroying an active worktree that git worktree remove failed to
+                    # unregister (e.g. due to a lock or concurrent run).
+                    wt_check = subprocess.run(
+                        "git worktree list --porcelain",
+                        shell=True, capture_output=True, text=True
+                    )
+                    registered_paths = [
+                        line.split(" ", 1)[1].strip()
+                        for line in wt_check.stdout.splitlines()
+                        if line.startswith("worktree ")
+                    ]
+                    norm_wt = os.path.normcase(os.path.abspath(worktree_dir))
+                    if not any(os.path.normcase(os.path.abspath(p)) == norm_wt for p in registered_paths):
+                        shutil.rmtree(worktree_dir, ignore_errors=True)
+                    else:
+                        print(f"\n[Orchestrator] WARNING: {worktree_dir} is still a registered git worktree — skipping rmtree to avoid data loss.")
 
                 # Create a fresh worktree on a new branch
                 res_wt = subprocess.run(
@@ -389,11 +406,24 @@ After testing, you MUST stop any server process you started, whether the test su
                     else:
                         worker_tools.append(tool)
 
+                # Build conversation-history context for the worker.
+                # history is the prior turns from the user session (same list passed to
+                # run_workers from the WebSocket / server layer). It gives workers
+                # awareness of what was already discussed or built earlier in the session.
+                history_ctx = ""
+                if history:
+                    history_ctx = "--- CONVERSATION HISTORY ---\n"
+                    for turn in history:
+                        role_label = "User" if turn.get("role") == "user" else "Assistant (CodeHive)"
+                        history_ctx += f"{role_label}: {turn.get('content', '')}\n\n"
+                    history_ctx += "--- END OF CONVERSATION HISTORY ---\n\n"
+
                 agent = Agent(
                     name=f"Worker-{subtask_id}",
                     role=subtask["title"],
                     system_instruction=(
                         f"You are a senior developer agent working on subtask '{subtask['title']}'.\n\n"
+                        f"{history_ctx}"
                         f"{port_note}"
                         f"{dep_context}"
                         f"{execution_rules}"
