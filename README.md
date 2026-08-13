@@ -72,14 +72,19 @@ export NVIDIA_API_KEY="your_nvidia_key_here"
 Alternatively, copy `.env.example` to `.env` and fill in your keys.
 
 ### 4. Run the CLI
-
 ```bash
 python main.py
 ```
 
-### Quick Start (Windows)
+### 5. Run the Web Interface (FastAPI / WebSockets)
+```bash
+python -m uvicorn server:app --host 127.0.0.1 --port 8086 --reload
+```
+Open **http://127.0.0.1:8086** in your browser. This web UI features real-time parallel streaming logs of worker agents via WebSockets.
 
-Double-click `start_codehive.bat` - it will prompt for API keys and launch the CLI automatically.
+### Quick Start (Windows)
+- Double-click `start_codehive.bat` to launch the CLI.
+- Double-click `start_codehive_web.bat` to launch the FastAPI Web server and automatically open the browser.
 
 ## Example Usage
 
@@ -117,28 +122,28 @@ Execution Warnings: []
 | `requirements.txt` | Project dependencies (`groq`, `openai`, `rich`) |
 | `test_suite.py` | Automated unit and integration testing suite |
 
-## Conflict Resolution (v3)
+## Conflict Resolution (v4)
 
-CodeHive includes a dual-layer conflict resolution system:
+CodeHive uses a native Git worktree-based conflict resolution architecture:
 
-### 1. File Claim Registry (Proactive)
-- Workers register file claims before writing
-- Real-time warnings when multiple workers target the same file
-- Non-blocking - provides visibility without stopping execution
+### 1. Git Worktree Isolation
+- Each worker executes inside a dedicated Git worktree (`codehive-worker-<subtask_id>`) checked out to a separate task branch (`task/<subtask_id>`).
+- Direct filesystem changes from different workers are isolated during execution.
 
-### 2. LLM Reconciler (Reactive Auto-Merge)
-- Detects when multiple workers wrote to the same file
-- Merges divergent versions using LLM-based reconciliation
-- Preserves intent from all workers' edits
-- **Safety Checks:**
-  - Python syntax validation (`ast.parse`)
-  - Rejects byte-identical merges (no-op detection)
-- **Fallback:** Last-write-wins with red conflict panel for manual review
+### 2. Native Git Merge & LLM Reconciler
+- When a wave of concurrent workers finishes, CodeHive commits each branch and merges it sequentially into the active branch.
+- **Merge Conflicts**: If sequential merging results in a Git merge conflict, CodeHive parses the conflict, isolates the conflicted file, and triggers the LLM-based reconciler.
+- **Safety Checks**:
+  - Python syntax validation (`ast.parse`) is performed on the reconciled content.
+  - Byte-identical merges are rejected (no-op detection).
+- **Fallback**: If reconciliation fails, CodeHive uses last-write-wins and flags the conflict for manual review.
 
-### 3. Execution Warnings
-- Tracks tool calls made by each worker
-- Warns if a worker claimed files but executed no tool calls
-- Helps detect stuck or misconfigured workers
+### 3. Winner/Loser Classification
+- Analyzes worker writes against the resolved merge content to dynamically log the winning worker (whose changes matched the merge output) and the losers.
+
+### 4. Execution Warnings & Audit
+- Monitors tool usage. Warns if a worker claimed they completed a subtask but no execution tools (like `run_bash`) or code writes were observed.
+- Blocks execution if workers bypass compile-time syntax checks.
 
 ## Multi-Provider Fallback (Groq → NVIDIA NIM)
 
