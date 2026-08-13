@@ -299,6 +299,7 @@ You MUST return ONLY a JSON object of this exact schema. Do not output any markd
         all_conflicts = []
         execution_warnings = []
         subtask_files_written = {}
+        all_subtask_writes = {}
 
         for wave_idx, wave in enumerate(waves):
             # Set up worktrees for this wave
@@ -484,6 +485,7 @@ After testing, you MUST stop any server process you started, whether the test su
                                 "message": f"[WARNING] Worker-{subtask_id} wrote code to {py_file} but only syntax checks or no execution runs were observed."
                             })
 
+            all_subtask_writes.update(wave_writes)
             results.update(wave_results)
 
             # Commit each worktree and merge back to active branch
@@ -533,11 +535,31 @@ After testing, you MUST stop any server process you started, whether the test su
                             except Exception as ex:
                                 merge_error = str(ex)
 
+                        # Identify winners and losers by comparing subtask write contents with resolved content
+                        norm_path = os.path.normpath(path)
+                        conflicting_workers = []
+                        winners = []
+                        losers = []
+                        for sid, w_list in all_subtask_writes.items():
+                            wrote_file = False
+                            matches_merged = False
+                            for w in w_list:
+                                if os.path.normpath(w["path"]) == norm_path:
+                                    wrote_file = True
+                                    if w["content"] == merged_content:
+                                        matches_merged = True
+                            if wrote_file:
+                                conflicting_workers.append(sid)
+                                if matches_merged:
+                                    winners.append(sid)
+                                else:
+                                    losers.append(sid)
+
                         all_conflicts.append({
                             "path": path,
-                            "workers": [subtask_id],
-                            "winners": [],
-                            "losers": [],
+                            "workers": conflicting_workers if conflicting_workers else [subtask_id],
+                            "winners": winners,
+                            "losers": losers,
                             "resolved": resolved,
                             "merged_content": merged_content,
                             "error": merge_error

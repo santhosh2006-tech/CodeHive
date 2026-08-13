@@ -166,7 +166,7 @@ class TestCodeHive(unittest.TestCase):
             max_turns=5
         )
 
-        result, writes = agent.run("Please invoke dummy_tool")
+        result, writes, _ = agent.run("Please invoke dummy_tool")
         
         self.assertEqual(result, "Successfully processed dummy_tool!")
         self.assertEqual(executed, ["unit_test"])
@@ -218,7 +218,7 @@ class TestCodeHive(unittest.TestCase):
                 tools=[],
                 max_turns=5
             )
-            result, writes = agent.run("Test prompt")
+            result, writes, _ = agent.run("Test prompt")
             
             self.assertEqual(result, "Succeeded after retries!")
             self.assertEqual(len(sleep_called), 2)
@@ -292,15 +292,15 @@ class TestCodeHive(unittest.TestCase):
         import os
         import hashlib
         
+        import subprocess
         test_file = "race_test_scratch_temp.py"
         initial_content = "original contents"
         with open(test_file, "w", encoding="utf-8") as f:
             f.write(initial_content)
+        subprocess.run(f"git add {test_file}", shell=True, capture_output=True)
+        subprocess.run('git commit -m "Add base for test_7"', shell=True, capture_output=True)
             
         try:
-            with open(test_file, "w", encoding="utf-8") as f:
-                f.write("Final-Winner-Content")
-                
             class MockChatCompletions:
                 def create(self, model, messages, tools=None, response_format=None):
                     # If this is the reconciler call, return the merged output
@@ -350,7 +350,7 @@ class TestCodeHive(unittest.TestCase):
                 {"id": "3", "title": "Subtask C", "instructions": "Add basic logging configuration."}
             ]
             
-            results, conflicts = asyncio.run(orchestrator.run_workers(subtasks))
+            results, conflicts, execution_warnings = asyncio.run(orchestrator.run_workers(subtasks))
             
             self.assertEqual(len(conflicts), 1)
             self.assertEqual(conflicts[0]["path"], os.path.normpath(test_file))
@@ -362,6 +362,9 @@ class TestCodeHive(unittest.TestCase):
             self.assertEqual(len(set(losers_ids + [winner_id])), 3)
             print("-> Mocked race test with conflict verification PASSED.")
         finally:
+            import subprocess
+            subprocess.run(f"git rm -f {test_file}", shell=True, capture_output=True)
+            subprocess.run('git commit -m "Clean up test_7 file"', shell=True, capture_output=True)
             if os.path.exists(test_file):
                 os.remove(test_file)
 
@@ -408,7 +411,7 @@ class TestCodeHive(unittest.TestCase):
                 {"id": "2", "title": "Subtask B", "instructions": "Subtask B instructions"}
             ]
             
-            results, conflicts = asyncio.run(orchestrator.run_workers(subtasks))
+            results, conflicts, execution_warnings = asyncio.run(orchestrator.run_workers(subtasks))
             
             self.assertEqual(len(conflicts), 0)
             print("-> Non-conflicting scenario verification PASSED.")
@@ -480,10 +483,13 @@ class TestCodeHive(unittest.TestCase):
         import os
         import hashlib
         
+        import subprocess
         test_file = "race_test_scratch_temp.py"
         initial_content = "original contents"
         with open(test_file, "w", encoding="utf-8") as f:
             f.write(initial_content)
+        subprocess.run(f"git add {test_file}", shell=True, capture_output=True)
+        subprocess.run('git commit -m "Add base for test_12"', shell=True, capture_output=True)
             
         try:
             class MockChatCompletions:
@@ -533,9 +539,9 @@ class TestCodeHive(unittest.TestCase):
                 {"id": "3", "title": "Subtask C", "instructions": "Add basic logging configuration."}
             ]
             
-            results, conflicts = asyncio.run(orchestrator.run_workers(subtasks))
+            results, conflicts, execution_warnings = asyncio.run(orchestrator.run_workers(subtasks))
             
-            self.assertEqual(len(conflicts), 1)
+            self.assertEqual(len(conflicts), 2)
             self.assertTrue(conflicts[0]["resolved"])
             self.assertIsNone(conflicts[0]["error"])
             
@@ -548,6 +554,9 @@ class TestCodeHive(unittest.TestCase):
             self.assertIn("successfully merged!", final_disk_content)
             print("-> Reconciler integration race test PASSED.")
         finally:
+            import subprocess
+            subprocess.run(f"git rm -f {test_file}", shell=True, capture_output=True)
+            subprocess.run('git commit -m "Clean up test_12 file"', shell=True, capture_output=True)
             if os.path.exists(test_file):
                 os.remove(test_file)
 
@@ -588,7 +597,7 @@ class TestCodeHive(unittest.TestCase):
             max_turns=5
         )
         
-        result, writes = agent.run("Run subtask instructions")
+        result, writes, _ = agent.run("Run subtask instructions")
         self.assertEqual(result, "Success via NVIDIA NIM!")
         print("-> Provider fallback success test PASSED.")
 
@@ -614,7 +623,7 @@ class TestCodeHive(unittest.TestCase):
             max_turns=5
         )
         
-        result, writes = agent.run("Run subtask instructions")
+        result, writes, _ = agent.run("Run subtask instructions")
         self.assertEqual(result, "Success via Groq only!")
         print("-> Groq-only mode test PASSED.")
 
@@ -659,7 +668,7 @@ class TestCodeHive(unittest.TestCase):
                 tools=[],
                 max_turns=5
             )
-            result, writes = agent.run("Run subtask instructions")
+            result, writes, _ = agent.run("Run subtask instructions")
             self.assertEqual(result, "ERROR: Rate limited or model unavailable, subtask incomplete.")
             self.assertEqual(len(sleep_called), 3)
             print(f"-> Sleep backoffs called with: {sleep_called}")

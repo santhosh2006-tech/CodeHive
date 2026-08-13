@@ -173,13 +173,15 @@ class Agent:
                         else:
                             raise e
 
-    def run(self, user_prompt: str) -> tuple[str, list[dict]]:
+    def run(self, user_prompt: str) -> tuple[str, list[dict], list[dict]]:
         """Runs the agent's tool-calling loop until completion or max_turns is reached.
         
         Returns:
-            A tuple of (result_text, writes) where writes is a list of write records.
+            A tuple of (result_text, writes, tool_calls_made) where writes is a list of write records
+            and tool_calls_made is a list of dicts representing tool calls made.
         """
         writes = []
+        tool_calls_made = []
         messages = [
             {"role": "system", "content": self.system_instruction},
             {"role": "user", "content": user_prompt}
@@ -202,7 +204,7 @@ class Agent:
                 
                 tool_calls = assistant_message.tool_calls
                 if not tool_calls:
-                    return assistant_message.content or "", writes
+                    return assistant_message.content or "", writes, tool_calls_made
 
                 # Process all tool calls concurrently requested in this turn
                 for call in tool_calls:
@@ -213,6 +215,9 @@ class Agent:
                         args = json.loads(call.function.arguments) if call.function.arguments else {}
                     except Exception:
                         args = {}
+
+                    # Track the tool call made
+                    tool_calls_made.append({"name": name, "arguments": args})
 
                     if self.on_tool_call:
                         self.on_tool_call(self.name, name, args, p_name)
@@ -245,10 +250,10 @@ class Agent:
 
                 turns += 1
 
-            return f"ERROR: Reached max turns cap of {self.max_turns} without finishing.", writes
+            return f"ERROR: Reached max turns cap of {self.max_turns} without finishing.", writes, tool_calls_made
 
         except Exception as e:
             status_code = getattr(e, "status_code", None)
             if status_code in (429, 503) or "rate limit" in str(e).lower() or "quota" in str(e).lower() or "over_limit" in str(e).lower():
-                return "ERROR: Rate limited or model unavailable, subtask incomplete.", writes
+                return "ERROR: Rate limited or model unavailable, subtask incomplete.", writes, tool_calls_made
             raise e

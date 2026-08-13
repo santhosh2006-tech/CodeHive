@@ -75,9 +75,20 @@ async def process_task(providers: list, user_prompt: str):
     console.print("[bold blue]Executing workers in parallel...[/bold blue]\n")
 
     # Run all workers concurrently
-    results, conflicts = await orchestrator.run_workers(subtasks, on_tool_call=on_tool_call)
+    results, conflicts, execution_warnings = await orchestrator.run_workers(subtasks, on_tool_call=on_tool_call)
 
     console.print("\n[bold green]All subtasks finished! Summarizing results:[/bold green]\n")
+
+    # Print execution warnings if any
+    if execution_warnings:
+        warn_text = ""
+        for warn in execution_warnings:
+            warn_text += f"[bold yellow]Worker-{warn['subtask_id']}:[/bold yellow] {warn['message']}\n"
+        console.print(Panel(
+            warn_text.strip(),
+            title="[bold yellow]Execution Warnings[/bold yellow]",
+            border_style="yellow"
+        ))
 
     # Print final summaries in original subtask order
     for subtask in subtasks:
