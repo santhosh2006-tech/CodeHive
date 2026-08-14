@@ -1,14 +1,13 @@
-# README.md
-## Introduction
-This project provides a set of tests for the user database, service registry, API gateway, and infrastructure.
+# Project Overview
+This project provides a set of tests for the user database, service registry, API gateway, and infrastructure components.
 
-## Tests
-The tests are organized into separate files for each component:
-- test_user_db.py: Tests for the user database.
-- test_service_registry.py: Tests for the service registry.
-- test_api_gateway.py: Tests for the API gateway.
-- test_infra.py: Tests for the infrastructure.
+## Test Suites
+The project includes the following test suites:
+- test_user_db.py: Tests the user database component.
+- test_service_registry.py: Tests the service registry component.
+- test_api_gateway.py: Tests the API gateway component.
+- test_infra.py: Tests the infrastructure component.
 
 ## Running the Tests
-To run the tests, execute the following command in the terminal:
+To run the tests, navigate to the project directory and execute the following command:
 python -m unittest discover
