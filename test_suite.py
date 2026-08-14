@@ -743,5 +743,39 @@ class TestCodeHive(unittest.TestCase):
             if os.path.exists(dep_file):
                 os.remove(dep_file)
 
+    def test_17_get_providers_single_key(self):
+        print("\n[TEST] Running get_providers single-key unit test...")
+        from unittest.mock import patch
+        from providers import get_providers
+        
+        mock_env = {
+            "GROQ_API_KEY": "gsk_primary_test_key"
+        }
+        with patch.dict("os.environ", mock_env, clear=True):
+            provs = get_providers()
+            self.assertEqual(len(provs), 1)
+            self.assertEqual(provs[0]["name"], "groq")
+            self.assertEqual(provs[0]["model"], "llama-3.3-70b-versatile")
+            print("-> get_providers single-key test PASSED.")
+
+    def test_18_get_providers_dual_key(self):
+        print("\n[TEST] Running get_providers dual-key unit test...")
+        from unittest.mock import patch
+        from providers import get_providers
+        
+        mock_env = {
+            "GROQ_API_KEY": "gsk_primary_test_key",
+            "GROQ_API_KEY_2": "gsk_secondary_test_key",
+            "NVIDIA_API_KEY": "nv_test_key"
+        }
+        with patch.dict("os.environ", mock_env, clear=True):
+            provs = get_providers()
+            self.assertEqual(len(provs), 3)
+            self.assertEqual(provs[0]["name"], "groq")
+            self.assertEqual(provs[1]["name"], "groq-secondary")
+            self.assertEqual(provs[2]["name"], "nvidia")
+            print("-> get_providers dual-key test PASSED.")
+
 if __name__ == "__main__":
     unittest.main()
+

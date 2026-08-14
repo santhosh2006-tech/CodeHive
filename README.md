@@ -40,7 +40,8 @@ CodeHive is a multi-agent developer CLI that uses a planner model to decompose c
 
 ### 1. Get Your API Keys
 
-- **Groq Key** (Required): Get a free key at [Groq Console](https://console.groq.com)
+- **Groq Key (Primary)** (Required): Get a free key at [Groq Console](https://console.groq.com)
+- **Groq Key (Secondary)** (Optional fallback): Get an additional/backup key to double your rate limit quota.
 - **NVIDIA Key** (Optional fallback): Get a free key at [NVIDIA Build](https://build.nvidia.com)
 
 ### 2. Install Requirements
@@ -54,18 +55,21 @@ pip install -r requirements.txt
 **PowerShell:**
 ```powershell
 $env:GROQ_API_KEY="your_groq_key_here"
+$env:GROQ_API_KEY_2="your_secondary_groq_key_here"  # Optional
 $env:NVIDIA_API_KEY="your_nvidia_key_here"  # Optional
 ```
 
 **CMD:**
 ```cmd
 set GROQ_API_KEY=your_groq_key_here
+set GROQ_API_KEY_2=your_secondary_groq_key_here
 set NVIDIA_API_KEY=your_nvidia_key_here
 ```
 
 **Unix/macOS:**
 ```bash
 export GROQ_API_KEY="your_groq_key_here"
+export GROQ_API_KEY_2="your_secondary_groq_key_here"
 export NVIDIA_API_KEY="your_nvidia_key_here"
 ```
 
@@ -149,12 +153,13 @@ CodeHive uses a native Git worktree-based conflict resolution architecture:
 
 To maximize free-tier rate limits:
 
-- **Groq**: 30 RPM free tier with `llama-3.3-70b-versatile`
-- **NVIDIA NIM**: ~40 RPM free tier with `meta/llama-3.3-70b-instruct`
-- **Combined capacity**: ~70 RPM
-- **Sequential Fallback**: On 429/503 errors, immediately retries on alternate provider
+- **Groq (Primary)**: 30 RPM free tier with `llama-3.3-70b-versatile`
+- **Groq (Secondary)**: Optional 30 RPM backup key to double active capacity to 60 RPM
+- **NVIDIA NIM (Tertiary)**: ~40 RPM free tier with `meta/llama-3.1-8b-instruct`
+- **Combined capacity**: ~100 RPM
+- **Sequential Fallback**: On 429/503 errors, immediately retries on the next available provider (Primary Groq -> Secondary Groq -> NVIDIA NIM)
 - **Sleep Backoff**: Only triggered if all providers fail
-- **Graceful Degradation**: Works with Groq-only if NVIDIA key not provided
+- **Graceful Degradation**: Works with any combination of configured keys
 
 ## Already Tested
 

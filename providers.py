@@ -14,6 +14,14 @@ def get_providers():
             "model": "llama-3.3-70b-versatile"
         })
         
+    # Groq Secondary API configuration
+    if os.environ.get("GROQ_API_KEY_2"):
+        providers.append({
+            "name": "groq-secondary",
+            "client": Groq(api_key=os.environ["GROQ_API_KEY_2"], timeout=30.0),
+            "model": "llama-3.3-70b-versatile"
+        })
+        
     # NVIDIA NIM API configuration
     if os.environ.get("NVIDIA_API_KEY"):
         providers.append({
