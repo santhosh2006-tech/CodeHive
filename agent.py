@@ -316,7 +316,22 @@ class Agent:
                 if assistant_message.content:
                     msg_dict["content"] = assistant_message.content
                 if assistant_message.tool_calls:
-                    msg_dict["tool_calls"] = assistant_message.tool_calls
+                    # Serialize tool_calls to plain dicts — MockToolCall objects aren't
+                    # JSON-serializable, so we must convert them before the next API call.
+                    serialized_calls = []
+                    for tc in assistant_message.tool_calls:
+                        if isinstance(tc, dict):
+                            serialized_calls.append(tc)
+                        else:
+                            serialized_calls.append({
+                                "id": tc.id,
+                                "type": tc.type,
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments
+                                }
+                            })
+                    msg_dict["tool_calls"] = serialized_calls
                 messages.append(msg_dict)
                 
                 tool_calls = assistant_message.tool_calls
