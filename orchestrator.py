@@ -141,11 +141,17 @@ class Orchestrator:
 
     def _reconcile_conflict(self, path: str, conf_content: str) -> str:
         """Invokes the LLM reconciler to resolve merge conflict markers inside a file.
-        Only called when git reports a real merge conflict (<<<<<<< markers present).
+        Called both when git reports a real merge conflict (<<<<<<< markers present)
+        AND for proactive cross-wave merge protection when a later-wave worker writes
+        to a file already populated by a different prior worker.
         """
         prompt = f"""You are a senior software conflict resolution reconciler.
 Your task is to merge the conflicting edits in a file containing Git conflict markers into a single resolved version.
-Preserve the intent of BOTH sides of the conflict. Do not add new imports, classes, or functions that are not present in either side.
+
+Rules:
+- If BOTH sides contribute distinct, non-overlapping content (e.g. different config keys, different functions), MERGE them — preserve content from both sides.
+- If the incoming side (>>>>>>> incoming) is clearly a complete, self-contained replacement that supersedes the existing side, use the incoming content.
+- Do not add new imports, classes, or functions that are not present in either side.
 
 Conflicted File Content:
 ---
@@ -384,7 +390,7 @@ After testing, you MUST stop any server process you started, whether the test su
                 worker_tools = []
                 for tool in self.tools:
                     if tool.__name__ == "write_file":
-                        def wrapped_write(path: str, content: str, wpath=worktree_dir) -> str:
+                        def wrapped_write(path: str, content: str, wpath=worktree_dir, cur_id=subtask_id) -> str:
                             abs_path = os.path.normpath(os.path.join(wpath, path))
                             if not abs_path.startswith(os.path.abspath(wpath)):
                                 return "ERROR: Path traversal detected."
@@ -392,7 +398,52 @@ After testing, you MUST stop any server process you started, whether the test su
                             # Self-healing double-escaped content
                             if (path.endswith(".py") or path.endswith(".md")) and "\n" not in content and "\\n" in content:
                                 content = content.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"').replace("\\'", "'")
-                                
+
+                            # Cross-wave merge protection (Option B):
+                            # If the file already has real content written by a DIFFERENT prior worker,
+                            # run the LLM reconciler instead of blindly overwriting.
+                            # Guard: same-worker writes (cur_id matches prior writer) are never reconciled.
+                            if os.path.exists(abs_path):
+                                try:
+                                    with open(abs_path, "r", encoding="utf-8") as _f:
+                                        existing = _f.read()
+                                    is_placeholder = (
+                                        not existing.strip()
+                                        or existing.strip() == "# Base file placeholder"
+                                        or existing.strip().startswith("# Base file placeholder")
+                                    )
+                                    if not is_placeholder:
+                                        # Find prior writers of this file (by normalized path)
+                                        norm_rel = os.path.normcase(os.path.normpath(path))
+                                        norm_abs = os.path.normcase(abs_path)
+                                        prior_writers = [
+                                            sid for sid, fpaths in subtask_files_written.items()
+                                            if str(sid) != str(cur_id) and any(
+                                                os.path.normcase(os.path.normpath(fp)) in (norm_rel, norm_abs)
+                                                for fp in fpaths
+                                            )
+                                        ]
+                                        if prior_writers:
+                                            conflict_text = (
+                                                f"<<<<<<< existing (Worker-{prior_writers[0]})\n"
+                                                f"{existing}\n"
+                                                f"=======\n"
+                                                f"{content}\n"
+                                                f">>>>>>> incoming (Worker-{cur_id})\n"
+                                            )
+                                            try:
+                                                merged = self._reconcile_conflict(path, conflict_text)
+                                                if "```" in merged:
+                                                    m = re.search(r"```(?:\w+)?\s*(.*?)\s*```", merged, re.DOTALL)
+                                                    if m:
+                                                        merged = m.group(1).strip()
+                                                print(f"[Orchestrator] Cross-wave merge applied to {path} (Worker-{prior_writers[0]} -> Worker-{cur_id})")
+                                                content = merged
+                                            except Exception as merge_err:
+                                                print(f"[Orchestrator] WARNING: Cross-wave reconcile failed for {path}: {merge_err}. Proceeding with normal write.")
+                                except Exception:
+                                    pass  # If read fails, proceed with normal write
+
                             return tools.write_file(abs_path, content)
                         wrapped_write.__name__ = "write_file"
                         wrapped_write.__doc__ = tools.write_file.__doc__

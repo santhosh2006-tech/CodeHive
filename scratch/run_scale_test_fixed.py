@@ -67,7 +67,7 @@ Ensure that Subtask 3 depends on Subtask 1 and Subtask 2, and Subtask 4 depends 
             try:
                 with open(f, "r", encoding="utf-8") as f_check:
                     content = f_check.read()
-                    if len(content) < 50 or content.strip().startswith("# Base file"):
+                    if content.strip() == "# Base file placeholder" or content.strip().startswith("# Base file placeholder") or not content.strip():
                         should_init = True
             except Exception:
                 should_init = True

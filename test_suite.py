@@ -776,6 +776,128 @@ class TestCodeHive(unittest.TestCase):
             self.assertEqual(provs[2]["name"], "nvidia")
             print("-> get_providers dual-key test PASSED.")
 
+    def test_19_cross_wave_merge_protection(self):
+        """Cross-wave merge protection: Worker-B in Wave 2 writing to a file already
+        populated by Worker-A in Wave 1 must trigger the reconciler, not a blind overwrite.
+        The final file must contain content from BOTH workers.
+        Same-worker writes must NOT trigger reconcile (no false positive).
+        """
+        print("\n[TEST] Running cross-wave merge protection test...")
+        import tempfile, shutil, subprocess, asyncio
+        from unittest.mock import patch
+
+        tmp_dir = tempfile.mkdtemp(prefix="codehive_test_xwave_")
+        try:
+            # Initialise a bare git repo in tmp_dir so worktrees work
+            subprocess.run("git init", shell=True, capture_output=True, cwd=tmp_dir)
+            subprocess.run('git config user.email "test@test.com"', shell=True, capture_output=True, cwd=tmp_dir)
+            subprocess.run('git config user.name "Test"', shell=True, capture_output=True, cwd=tmp_dir)
+
+            # Write and commit placeholder files so worktree can branch from HEAD
+            shared_file = os.path.join(tmp_dir, "config.py")
+            with open(shared_file, "w") as f:
+                f.write("# Base file placeholder\n")
+            other_file = os.path.join(tmp_dir, "other.py")
+            with open(other_file, "w") as f:
+                f.write("# Base file placeholder\n")
+            subprocess.run("git add -A", shell=True, capture_output=True, cwd=tmp_dir)
+            subprocess.run('git commit -m "init"', shell=True, capture_output=True, cwd=tmp_dir)
+
+            # Track what the reconciler was actually called with
+            reconcile_calls = []
+            WORKER_A_CONTENT = "DB_HOST = 'localhost'\nDB_PORT = 5432\n"
+            WORKER_B_CONTENT = "GATEWAY_PORT = 9103\nGATEWAY_ROUTES = ['/api']\n"
+            MERGED_CONTENT = WORKER_A_CONTENT + WORKER_B_CONTENT  # what reconciler returns
+
+            def mock_reconcile(self_inner, path, conf_content):
+                reconcile_calls.append((path, conf_content))
+                return f"```python\n{MERGED_CONTENT}```"
+
+            # Build a minimal mock LLM client that:
+            # - Worker-1 (Wave 1): writes config.py with WORKER_A_CONTENT, then finishes
+            # - Worker-2 (Wave 2): writes config.py with WORKER_B_CONTENT, then finishes
+            call_counts = {"1": 0, "2": 0}
+
+            class MockChatCompletions:
+                def create(self, model, messages, tools=None, tool_choice=None, **kwargs):
+                    user_msg = messages[-1].get("content", "") if messages else ""
+                    if "Subtask 1" in user_msg or ("config.py" in user_msg and "DB" in user_msg):
+                        call_counts["1"] += 1
+                        if call_counts["1"] == 1:
+                            return MockResponse(
+                                content=None,
+                                tool_calls=[MockToolCall(
+                                    name="write_file",
+                                    arguments=json.dumps({"path": "config.py", "content": WORKER_A_CONTENT}),
+                                    call_id="call_w1"
+                                )]
+                            )
+                        return MockResponse(content="Worker-1 done.", tool_calls=None)
+                    elif "Subtask 2" in user_msg or "DEPENDENCY FILES" in user_msg or "gateway" in user_msg.lower():
+                        call_counts["2"] += 1
+                        if call_counts["2"] == 1:
+                            return MockResponse(
+                                content=None,
+                                tool_calls=[MockToolCall(
+                                    name="write_file",
+                                    arguments=json.dumps({"path": "config.py", "content": WORKER_B_CONTENT}),
+                                    call_id="call_w2"
+                                )]
+                            )
+                        return MockResponse(content="Worker-2 done.", tool_calls=None)
+                    return MockResponse(content="Done.", tool_calls=None)
+
+            class MockChat:
+                def __init__(self): self.completions = MockChatCompletions()
+            class MockClient:
+                def __init__(self): self.chat = MockChat()
+
+            mock_client = MockClient()
+
+            orig_cwd = os.getcwd()
+            os.chdir(tmp_dir)
+            try:
+                with patch.object(type(Orchestrator(client=mock_client, tools=[tools.write_file])),
+                                  '_reconcile_conflict', mock_reconcile):
+                    orchestrator = Orchestrator(client=mock_client, tools=[tools.write_file, tools.read_file])
+                    subtasks = [
+                        {"id": "1", "title": "Subtask 1", "instructions": "Write DB config to config.py"},
+                        {"id": "2", "title": "Subtask 2", "instructions": "Write gateway config to config.py", "depends_on": ["1"]},
+                    ]
+                    results, conflicts, warnings = asyncio.run(orchestrator.run_workers(subtasks))
+            finally:
+                os.chdir(orig_cwd)
+
+            # Reconciler MUST have been called for config.py (cross-wave protection triggered)
+            self.assertTrue(
+                len(reconcile_calls) >= 1,
+                f"Expected reconciler to be called for cross-wave config.py write, but it was not called. reconcile_calls={reconcile_calls}"
+            )
+            reconciled_paths = [c[0] for c in reconcile_calls]
+            self.assertIn("config.py", reconciled_paths,
+                f"Reconciler was called but not for config.py. Called for: {reconciled_paths}")
+
+            # Reconciler conflict text must contain content from BOTH workers
+            conf_text = reconcile_calls[0][1]
+            self.assertIn("DB_HOST", conf_text,
+                "Reconciler conflict text missing Worker-A content (DB_HOST)")
+            self.assertIn("GATEWAY_PORT", conf_text,
+                "Reconciler conflict text missing Worker-B content (GATEWAY_PORT)")
+
+            # Same-worker test: Worker-1 rewriting its own file must NOT call reconciler
+            # (reconcile_calls length must be exactly 1, not 2 — if same-worker triggered it,
+            # the count would be wrong)
+            self.assertEqual(len(reconcile_calls), 1,
+                f"Reconciler was called {len(reconcile_calls)} times — expected exactly 1 "
+                f"(same-worker writes must not trigger reconcile). calls={reconcile_calls}")
+
+            print("-> Cross-wave merge protection PASSED.")
+        finally:
+            try:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            except Exception:
+                pass
+
 if __name__ == "__main__":
     unittest.main()
 
