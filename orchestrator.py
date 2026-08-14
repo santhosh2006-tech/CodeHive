@@ -432,6 +432,11 @@ After testing, you MUST stop any server process you started, whether the test su
                         f"{dep_context}"
                         f"{execution_rules}"
                         f"Instructions:\n{subtask['instructions']}\n\n"
+                        "CRITICAL TOOL CALLING FORMAT RULES:\n"
+                        "- When calling a function, your JSON arguments must be properly escaped.\n"
+                        "- Multi-line strings in JSON parameters (like 'content') MUST escape all newlines as '\\n' and quotes as '\\\"'.\n"
+                        "- Never output raw newlines inside JSON argument strings. Keep the entire JSON argument block on a single line if possible.\n"
+                        "- Do not add spaces or extra characters inside the '<function=...>' tag.\n\n"
                         "You MUST write real working code and finish with a plain-text summary of your actions once done.\n"
                         "Do not call any tools after your final summary."
                     ),
@@ -446,9 +451,10 @@ After testing, you MUST stop any server process you started, whether the test su
             with ThreadPoolExecutor(max_workers=max(1, len(wave))) as executor:
                 agents_in_wave = [make_worker(st) for st in wave]
                 for subtask_id, agent in agents_in_wave:
+                    st_dict = subtask_map[subtask_id]
                     # History context is already embedded in the agent's system_instruction;
                     # Agent.run() only takes the immediate instructions string.
-                    future = loop.run_in_executor(executor, agent.run, subtask["instructions"])
+                    future = loop.run_in_executor(executor, agent.run, st_dict["instructions"])
                     wave_futures.append((subtask_id, future))
 
                 wave_results = {}

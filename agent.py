@@ -3,6 +3,89 @@ import re
 import json
 import hashlib
 
+class MockFunction:
+    def __init__(self, name, arguments):
+        self.name = name
+        self.arguments = arguments
+
+class MockToolCall:
+    def __init__(self, call_id, name, arguments):
+        self.id = call_id
+        self.type = "function"
+        self.function = MockFunction(name, arguments)
+
+class MockMessage:
+    def __init__(self, tool_calls, content=""):
+        self.role = "assistant"
+        self.content = content
+        self.tool_calls = tool_calls
+        self.function_call = None
+        self.refusal = None
+
+class MockChoice:
+    def __init__(self, message):
+        self.message = message
+        self.finish_reason = "tool_calls" if message.tool_calls else "stop"
+        self.index = 0
+
+class MockResponse:
+    def __init__(self, message):
+        self.choices = [MockChoice(message)]
+        self.id = "mock_response_123"
+        self.model = "llama-3.3-70b-versatile"
+        self.object = "chat.completion"
+
+def clean_and_parse_json(s):
+    # Try parsing it directly first
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+        
+    chars = []
+    in_string = False
+    escape = False
+    for c in s:
+        if c == '"' and not escape:
+            in_string = not in_string
+            chars.append(c)
+        elif c == '\\' and in_string:
+            escape = not escape
+            chars.append(c)
+        elif c == '\n' and in_string:
+            chars.append('\\n')  # Escape raw newline!
+        elif c == '\r' and in_string:
+            chars.append('\\r')  # Escape raw carriage return!
+        else:
+            escape = False
+            chars.append(c)
+    
+    repaired = "".join(chars)
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError as e:
+        # Fallback regex if repair parser fails
+        path_match = re.search(r'"path"\s*:\s*"([^"]+)"', s)
+        cmd_match = re.search(r'"command"\s*:\s*"(.*?)"', s, re.DOTALL)
+        content_match = re.search(r'"content"\s*:\s*"(.*)"\s*,?\s*"path"', s, re.DOTALL)
+        if not content_match:
+            content_match = re.search(r'"path"\s*:\s*"[^"]+"\s*,\s*"content"\s*:\s*"(.*)"', s, re.DOTALL)
+        
+        res = {}
+        if path_match:
+            res["path"] = path_match.group(1)
+        if cmd_match:
+            res["command"] = cmd_match.group(1)
+        if content_match:
+            content_val = content_match.group(1)
+            if content_val.endswith('"}') or content_val.endswith('" }'):
+                content_val = content_val.rsplit('"', 1)[0]
+            res["content"] = content_val
+        
+        if res:
+            return res
+        raise e
+
 def get_tools_schema(tools_list):
     """Generates OpenAI-style tools schema list from Python functions."""
     schema_map = {
@@ -141,6 +224,53 @@ class Agent:
                     return response, p_idx, p_name
                     
                 except Exception as e:
+                    # Check if this is a Groq tool call validation error that we can self-heal
+                    if type(e).__name__ == "BadRequestError" and hasattr(e, "body") and isinstance(e.body, dict):
+                        error_info = e.body.get("error", {})
+                        if error_info.get("code") == "tool_use_failed" and error_info.get("failed_generation"):
+                            failed_gen = error_info["failed_generation"]
+                            print(f"\n[{self.name}] WARNING: Intercepted Groq tool_use_failed error. Attempting self-healing parse...")
+                            
+                            # Parse failed generation
+                            match = re.search(r"<function=(\w+)(?:\s*)>(.*?)</function>", failed_gen, re.DOTALL)
+                            if not match:
+                                match = re.search(r"<function=(\w+)(?:\s*)>(.*)", failed_gen, re.DOTALL)
+                                
+                            func_name = None
+                            args_str = None
+                            
+                            if match:
+                                func_name = match.group(1)
+                                args_str = match.group(2).strip()
+                            else:
+                                # Fallback: check if the model put the arguments inside the tag itself, e.g. <function=read_file={"path": "user_db.py"}>
+                                match_weird = re.search(r"<function=([a-zA-Z0-9_-]+)=(.*?)(?:/?)>", failed_gen, re.DOTALL)
+                                if match_weird:
+                                    func_name = match_weird.group(1)
+                                    args_str = match_weird.group(2).strip()
+                                    # Strip trailing </function> if it exists in args_str
+                                    if args_str.endswith("</function>"):
+                                        args_str = args_str.rsplit("</function>", 1)[0].strip()
+                                    elif args_str.endswith(">"):
+                                        args_str = args_str[:-1].strip()
+                                        
+                            if func_name and args_str:
+                                
+                                try:
+                                    parsed_args = clean_and_parse_json(args_str)
+                                    # Construct MockResponse
+                                    mock_tc = MockToolCall(
+                                        call_id=f"call_heal_{int(time.time())}_{p_idx}",
+                                        name=func_name,
+                                        arguments=json.dumps(parsed_args)
+                                    )
+                                    mock_msg = MockMessage(tool_calls=[mock_tc])
+                                    mock_resp = MockResponse(message=mock_msg)
+                                    print(f"[{self.name}] SUCCESS: Self-healed tool call parser for {func_name}!")
+                                    return mock_resp, p_idx, p_name
+                                except Exception as pe:
+                                    print(f"[{self.name}] FAILED: Self-healing parse failed to parse JSON arguments: {pe}")
+
                     # Determine if the error is a permanent request/formatting error or a recoverable failure (rate limit, auth, server error, timeout)
                     status_code = getattr(e, "status_code", None)
                     
