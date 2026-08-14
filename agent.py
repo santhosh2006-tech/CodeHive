@@ -141,24 +141,24 @@ class Agent:
                     return response, p_idx, p_name
                     
                 except Exception as e:
-                    # Determine if the error is a permanent client error or transient/rate-limit
+                    # Determine if the error is a permanent request/formatting error or a recoverable failure (rate limit, auth, server error, timeout)
                     status_code = getattr(e, "status_code", None)
-                    is_transient = True
-                    if status_code in (400, 401, 403, 404, 422):
-                        is_transient = False
                     
-                    # If this provider failed with a transient error and we have alternatives, fall back immediately
-                    if is_transient and num_providers > 1 and offset < num_providers - 1:
+                    # 400 (Bad Request), 404 (Not Found), and 422 (Unprocessable Entity) are permanent request/formatting errors
+                    is_recoverable = status_code not in (400, 404, 422)
+                    
+                    # If this provider failed with a recoverable error and we have alternatives, fall back immediately with warning
+                    if is_recoverable and num_providers > 1 and offset < num_providers - 1:
                         next_idx = (p_idx + 1) % num_providers
                         next_provider = self.providers[next_idx]
                         print(f"\n[{self.name}] WARNING: {p_name} failed (status {status_code or 'error'}). Falling back immediately to {next_provider['name']}...")
                         continue
                     
-                    # If this is the last provider in the chain for this retry attempt, sleep and try again
-                    if offset == num_providers - 1:
+                    # Otherwise, if it is a permanent request error, or we have run out of alternative providers
+                    if not is_recoverable or offset == num_providers - 1:
                         if attempt < max_retries:
-                            # If it's a permanent error, raise it immediately without retrying
-                            if not is_transient:
+                            # If it is a permanent request error, raise it immediately without retrying further
+                            if not is_recoverable:
                                 raise e
                                 
                             delay = base_backoff * (2 ** attempt)
