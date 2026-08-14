@@ -1,11 +1,1 @@
-import unittest
-from user_db import UserDB
-
-class TestUserDB(unittest.TestCase):
-    def test_user_db(self):
-        user_db = UserDB()
-        self.assertIsNotNone(user_db)
-
-groups = unittest.TestLoader().loadTestsFromTestCase(TestUserDB)
-test_runner = unittest.TextTestRunner(verbosity=2)
-test_runner.run(groups)
+import unittest\nfrom user_db import UserDB\n\nclass TestUserDB(unittest.TestCase):\n    def test_create_user(self):\n        user_db = UserDB()\n        user_db.create_user("test_user", "test_password")\n        self.assertTrue(user_db.check_user("test_user", "test_password"))\n\n    def test_check_user(self):\n        user_db = UserDB()\n        user_db.create_user("test_user", "test_password")\n        self.assertTrue(user_db.check_user("test_user", "test_password"))\n        self.assertFalse(user_db.check_user("test_user", "wrong_password"))\n\nif __name__ == '__main__':\n    unittest.main()

@@ -2,10 +2,10 @@ import unittest
 from api_gateway import ApiGateway
 
 class TestApiGateway(unittest.TestCase):
-    def test_api_gateway(self):
+    def test_handle_request(self):
         api_gateway = ApiGateway()
-        self.assertIsNotNone(api_gateway)
+        response = api_gateway.handle_request("test_request")
+        self.assertEqual(response.status_code, 200)
 
-groups = unittest.TestLoader().loadTestsFromTestCase(TestApiGateway)
-test_runner = unittest.TextTestRunner(verbosity=2)
-test_runner.run(groups)
+if __name__ == '__main__':
+    unittest.main()

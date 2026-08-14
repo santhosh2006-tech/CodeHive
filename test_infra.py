@@ -2,10 +2,10 @@ import unittest
 from infra import Infra
 
 class TestInfra(unittest.TestCase):
-    def test_infra(self):
+    def test_create_infra(self):
         infra = Infra()
-        self.assertIsNotNone(infra)
+        infra.create_infra("test_infra")
+        self.assertTrue(infra.check_infra("test_infra"))
 
-groups = unittest.TestLoader().loadTestsFromTestCase(TestInfra)
-test_runner = unittest.TextTestRunner(verbosity=2)
-test_runner.run(groups)
+if __name__ == '__main__':
+    unittest.main()

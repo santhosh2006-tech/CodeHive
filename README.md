@@ -1,12 +1,1 @@
-# Introduction
-This project provides a basic framework for a microservices-based system.
-
-# Usage
-To use this project, simply clone it and run the tests using the provided test files.
-
-# Components
-This project consists of the following components:
-- User DB: A database for storing user information.
-- Service Registry: A registry for storing service information.
-- API Gateway: An entry point for the system, responsible for routing requests to the appropriate services.
-- Infra: The infrastructure layer, responsible for providing the underlying services for the system.
+# Project README\n\n## Introduction\nThis project provides a basic structure for a microservices-based system. It includes a user database, a service registry, an API gateway, and infrastructure management.\n\n## Components\n* User Database: Stores user credentials and provides authentication functionality.\n* Service Registry: Registers and manages services in the system.\n* API Gateway: Handles incoming requests and routes them to the appropriate services.\n* Infrastructure: Manages the underlying infrastructure for the system.\n\n## Tests\nThe project includes unit tests for each component, which can be run using the unittest framework.\n\n## Usage\n1. Run the tests: python -m unittest discover\n2. Start the API gateway: python api_gateway.py\n3. Use the API gateway to access the services: curl http://localhost:9204/test_service
