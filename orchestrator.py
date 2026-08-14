@@ -442,8 +442,11 @@ After testing, you MUST stop any server process you started, whether the test su
                         "- Multi-line strings in JSON parameters (like 'content') MUST escape all newlines as '\\n' and quotes as '\\\"'.\n"
                         "- Never output raw newlines inside JSON argument strings. Keep the entire JSON argument block on a single line if possible.\n"
                         "- Do not add spaces or extra characters inside the '<function=...>' tag.\n\n"
-                        "You MUST write real working code and finish with a plain-text summary of your actions once done.\n"
-                        "Do not call any tools after your final summary."
+                        "MANDATORY COMPLETION REQUIREMENT:\n"
+                        "- You MUST call write_file for EVERY file listed in your instructions. Do NOT describe what you would write — CALL the tool and write it NOW.\n"
+                        "- A text-only response that does not call write_file is WRONG and means your subtask is INCOMPLETE.\n"
+                        "- Only after all required write_file calls are done should you output a plain-text summary.\n"
+                        "- Do not call any tools after your final summary."
                     ),
                     providers=self.providers,
                     tools=worker_tools,
