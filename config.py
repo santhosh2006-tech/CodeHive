@@ -1,1 +1,3 @@
-# Base file placeholder
+SERVICE_REGISTRY = {}
+CLIENT_REGISTRY = {}
+SERVICE_PORT = 9002
