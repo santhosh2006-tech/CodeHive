@@ -388,6 +388,11 @@ After testing, you MUST stop any server process you started, whether the test su
                             abs_path = os.path.normpath(os.path.join(wpath, path))
                             if not abs_path.startswith(os.path.abspath(wpath)):
                                 return "ERROR: Path traversal detected."
+                            
+                            # Self-healing double-escaped content
+                            if (path.endswith(".py") or path.endswith(".md")) and "\n" not in content and "\\n" in content:
+                                content = content.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"').replace("\\'", "'")
+                                
                             return tools.write_file(abs_path, content)
                         wrapped_write.__name__ = "write_file"
                         wrapped_write.__doc__ = tools.write_file.__doc__
