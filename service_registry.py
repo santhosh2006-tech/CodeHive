@@ -1,9 +1,11 @@
-from typing import Dict
+# Service Registry
 
-registries: Dict[str, str] = {}
+class ServiceRegistry:
+    def __init__(self):
+        self.services = {}
 
-def register_service(service_name: str, service_url: str):
-    registries[service_name] = service_url
+    def register(self, service_name, service_instance):
+        self.services[service_name] = service_instance
 
-def get_service_url(service_name: str) -> str:
-    return registries.get(service_name)
+    def get_service(self, service_name):
+        return self.services.get(service_name)

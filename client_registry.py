@@ -1,9 +1,11 @@
-from typing import Dict
+# Client Registry
 
-registries: Dict[str, str] = {}
+class ClientRegistry:
+    def __init__(self):
+        self.clients = {}
 
-def register_client(client_name: str, client_url: str):
-    registries[client_name] = client_url
+    def register(self, client_id, client_instance):
+        self.clients[client_id] = client_instance
 
-def get_client_url(client_name: str) -> str:
-    return registries.get(client_name)
+    def get_client(self, client_id):
+        return self.clients.get(client_id)
