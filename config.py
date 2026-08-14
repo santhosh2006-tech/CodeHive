@@ -15,3 +15,8 @@ CLIENT_REGISTRY_CONFIG = {
     'host': 'localhost',
     'port': 9002
 }
+
+GATEWAY_ROUTE_PROPERTIES = {
+    'host': 'localhost',
+    'port': 9103
+}
