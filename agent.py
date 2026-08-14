@@ -232,39 +232,11 @@ class Agent:
                             print(f"\n[{self.name}] WARNING: Intercepted Groq tool_use_failed error. Attempting self-healing parse...")
                             
                             # Parse failed generation
-                            match = re.search(r"<function=(\w+)(?:\s*)>(.*?)</function>", failed_gen, re.DOTALL)
-                            if not match:
-                                match = re.search(r"<function=(\w+)(?:\s*)>(.*)", failed_gen, re.DOTALL)
-                                
-                            func_name = None
-                            args_str = None
+                            match_func = re.search(r"<function=([a-zA-Z0-9_-]+)", failed_gen)
+                            match_json = re.search(r"({.*})", failed_gen, re.DOTALL)
                             
-                            if match:
-                                func_name = match.group(1)
-                                args_str = match.group(2).strip()
-                            else:
-                                # Fallback: check if the model put the arguments inside the tag itself, e.g. <function=read_file={"path": "user_db.py"}>
-                                match_weird = re.search(r"<function=([a-zA-Z0-9_-]+)=(.*?)(?:/?)>", failed_gen, re.DOTALL)
-                                if match_weird:
-                                    func_name = match_weird.group(1)
-                                    args_str = match_weird.group(2).strip()
-                                    # Strip trailing </function> if it exists in args_str
-                                    if args_str.endswith("</function>"):
-                                        args_str = args_str.rsplit("</function>", 1)[0].strip()
-                                    elif args_str.endswith(">"):
-                                        args_str = args_str[:-1].strip()
-                                else:
-                                    # Fallback: check for space-separated arguments inside the tag, e.g. <function=read_file {"path": "user_db.py"}>
-                                    match_space = re.search(r"<function=([a-zA-Z0-9_-]+)\s+({.*?})(?:/?)>", failed_gen, re.DOTALL)
-                                    if match_space:
-                                        func_name = match_space.group(1)
-                                        args_str = match_space.group(2).strip()
-                                    else:
-                                        # Fallback: check for parenthesis-enclosed arguments inside the tag, e.g. <function=read_file({"path": "user_db.py"})>
-                                        match_paren = re.search(r"<function=([a-zA-Z0-9_-]+)\(({.*?})\)", failed_gen, re.DOTALL)
-                                        if match_paren:
-                                            func_name = match_paren.group(1)
-                                            args_str = match_paren.group(2).strip()
+                            func_name = match_func.group(1) if match_func else None
+                            args_str = match_json.group(1).strip() if match_json else None
                                         
                             if func_name and args_str:
                                 
