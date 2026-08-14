@@ -32,7 +32,7 @@ async def main():
 12. README.md: Service catalog documentation.
 
 Subtasks must be created for parallel workers:
-- Worker 1 implements user_db.py, client_user.py, and writes database configurations to config.py.
+- Worker 1 implements user_db.py, client_user.py, logger.py (a simple logging utility with a get_logger() function), and writes database configurations to config.py.
 - Worker 2 implements service_registry.py, client_registry.py, and writes registry configurations to config.py (concurrently overlapping and conflicting with Worker 1 on config.py).
 - Worker 3 implements the API gateway api_gateway.py (which imports client libraries and maps endpoints) and updates config.py with gateway route properties (runs in Wave 2 on top of Wave 1's merged output).
 - Worker 4 writes test_user_db.py, test_service_registry.py, test_api_gateway.py, test_infra.py, and README.md.

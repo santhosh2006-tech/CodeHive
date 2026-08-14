@@ -502,6 +502,25 @@ After testing, you MUST stop any server process you started, whether the test su
                                 "message": f"[WARNING] Worker-{subtask_id} wrote code to {py_file} but only syntax checks or no execution runs were observed."
                             })
 
+                    # Post-write syntax check: py_compile every .py file written by this worker
+                    import py_compile, tempfile
+                    worktree_dir_check = os.path.abspath(os.path.join("..", f"codehive-worker-{subtask_id}"))
+                    for w in writes:
+                        wpath = w["path"]
+                        if not wpath.endswith(".py"):
+                            continue
+                        abs_wpath = os.path.normpath(os.path.join(worktree_dir_check, wpath)) if not os.path.isabs(wpath) else wpath
+                        if not os.path.exists(abs_wpath):
+                            continue
+                        try:
+                            py_compile.compile(abs_wpath, doraise=True)
+                        except py_compile.PyCompileError as compile_err:
+                            execution_warnings.append({
+                                "subtask_id": subtask_id,
+                                "path": wpath,
+                                "message": f"[SYNTAX ERROR] Worker-{subtask_id} wrote syntactically invalid Python to {wpath}: {compile_err}"
+                            })
+
             all_subtask_writes.update(wave_writes)
             results.update(wave_results)
 
