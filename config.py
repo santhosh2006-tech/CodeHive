@@ -1,1 +1,3 @@
-# Base file placeholder
+# config.py
+REGISTRY_SERVICE_HOST = 'localhost'
+REGISTRY_SERVICE_PORT = 9002
