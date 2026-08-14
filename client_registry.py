@@ -1,1 +1,1 @@
-# Base file placeholder
+# Client Registry\n\nclass ClientRegistry:\n    def __init__(self):\n        self.clients = {}\n\n    def register(self, client_id, client_url):\n        self.clients[client_id] = client_url\n\n    def get_client_url(self, client_id):\n        return self.clients.get(client_id)\n
