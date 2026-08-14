@@ -1,1 +1,1 @@
-# Base file placeholder
+# Service Registry\n\nclass ServiceRegistry:\n    def __init__(self):\n        self.services = {}\n\n    def register(self, service_name, service_url):\n        self.services[service_name] = service_url\n\n    def get_service_url(self, service_name):\n        return self.services.get(service_name)\n

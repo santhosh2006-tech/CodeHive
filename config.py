@@ -1,5 +1,4 @@
-GATEWAY_ROUTE.Properties = {
-    "protocol": "http",
-    "host": "localhost",
-    "port": 9103
-}
+# Registry Configurations
+
+SERVICE_REGISTRY = {}
+CLIENT_REGISTRY = {}
