@@ -259,6 +259,12 @@ class Agent:
                                     if match_space:
                                         func_name = match_space.group(1)
                                         args_str = match_space.group(2).strip()
+                                    else:
+                                        # Fallback: check for parenthesis-enclosed arguments inside the tag, e.g. <function=read_file({"path": "user_db.py"})>
+                                        match_paren = re.search(r"<function=([a-zA-Z0-9_-]+)\(({.*?})\)", failed_gen, re.DOTALL)
+                                        if match_paren:
+                                            func_name = match_paren.group(1)
+                                            args_str = match_paren.group(2).strip()
                                         
                             if func_name and args_str:
                                 
