@@ -4,11 +4,8 @@ class ClientUser:
     def __init__(self, db_name):
         self.user_db = UserDB(db_name)
 
-    def add_user(self, name, email):
-        self.user_db.insert_user(name, email)
+    def add_user(self, username, password):
+        self.user_db.add_user(username, password)
 
-    def get_users(self):
-        return self.user_db.get_users()
-
-    def close_connection(self):
-        self.user_db.close_connection()
+    def get_user(self, username):
+        return self.user_db.get_user(username)

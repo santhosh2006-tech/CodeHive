@@ -9,17 +9,17 @@ class UserDB:
     def create_table(self):
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS users
-            (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT)
+            (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, password TEXT)
         """)
         self.conn.commit()
 
-    def insert_user(self, name, email):
-        self.cursor.execute("INSERT INTO users (name, email) VALUES (?, ?)", (name, email))
+    def add_user(self, username, password):
+        self.cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
         self.conn.commit()
 
-    def get_users(self):
-        self.cursor.execute("SELECT * FROM users")
-        return self.cursor.fetchall()
+    def get_user(self, username):
+        self.cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+        return self.cursor.fetchone()
 
-    def close_connection(self):
+    def close(self):
         self.conn.close()
