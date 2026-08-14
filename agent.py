@@ -253,6 +253,12 @@ class Agent:
                                         args_str = args_str.rsplit("</function>", 1)[0].strip()
                                     elif args_str.endswith(">"):
                                         args_str = args_str[:-1].strip()
+                                else:
+                                    # Fallback: check for space-separated arguments inside the tag, e.g. <function=read_file {"path": "user_db.py"}>
+                                    match_space = re.search(r"<function=([a-zA-Z0-9_-]+)\s+({.*?})(?:/?)>", failed_gen, re.DOTALL)
+                                    if match_space:
+                                        func_name = match_space.group(1)
+                                        args_str = match_space.group(2).strip()
                                         
                             if func_name and args_str:
                                 
